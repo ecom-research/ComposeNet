@@ -33,30 +33,25 @@ def test(opt, model, testset):
     # compute test query features
     imgs = []
     mods = []
-    img1_regions = []
     nouns = []
     for t in tqdm(test_queries):
       torch.cuda.empty_cache()
       imgs += [testset.get_img(t['source_img_id'])]
-      img1_regions += [t["source_regions_data"]]
       mods += [t['mod']['str']]
       nouns += [str(t["noun"])]
       if len(imgs) >= opt.batch_size or t is test_queries[-1]:
         if 'torch' not in str(type(imgs[0])):
           imgs = [torch.from_numpy(d).float() for d in imgs]
         imgs = torch.stack(imgs).float()
-        regions = np.stack(img1_regions)
         imgs = torch.autograd.Variable(imgs).cuda()
         mods = [t.decode('utf-8') for t in mods]
-        scan_info  = regions, nouns
-        if opt.model == 'tirg_scan':
-            f = model.compose_img_text_with_regions(imgs.cuda(), mods, scan_info).data.cpu().numpy()
+        if opt.model == 'tirg_evolved':
+            f = model.compose_img_text_with_nouns(imgs.cuda(), mods, nouns).data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
         all_queries += [f]
         imgs = []
         mods = []
-        img1_regions = []
         nouns = []
     all_queries = np.concatenate(all_queries)
     all_target_captions = [t['target_caption'] for t in test_queries]
@@ -81,32 +76,24 @@ def test(opt, model, testset):
     imgs0 = []
     imgs = []
     mods = []
-    img1_regions = []
     nouns = []
     for i in range(10000):
       torch.cuda.empty_cache()
       item = testset[i]
       imgs += [item['source_img_data']]
-      img1_regions += [item["source_regions_data"]]
       nouns += [str(item["noun"])]
       mods += [item['mod']['str']]
       if len(imgs) > opt.batch_size or i == 9999:
         imgs = torch.stack(imgs).float() ## !!!
-        regions = np.stack(img1_regions)
         imgs = torch.autograd.Variable(imgs)
-        # regions = torch.autograd.Variable(regions)
         mods = [t.decode('utf-8') for t in mods]
         nouns = [t.decode('utf-8') for t in nouns]
-        scan_info  = regions, nouns
-        # print('test_retrieval', regions.shape, len(nouns), nouns[0])
-        if opt.model == 'tirg_scan':
-            # print(imgs.shape, len(mods), scan_info[0].shape, len(scan_info[1]))
-            f = model.compose_img_text_with_regions(imgs.cuda(), mods, scan_info).data.cpu().numpy()
+        if opt.model == 'tirg_evolved':
+            f = model.compose_img_text_with_nouns(imgs.cuda(), mods, nouns).data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
         all_queries += [f]
         imgs = []
-        img1_regions = []
         nouns = []
         mods = []
       imgs0 += [item['target_img_data']]

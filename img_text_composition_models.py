@@ -142,13 +142,13 @@ class ImgTextCompositionBase(torch.nn.Module):
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
-    def compute_loss_with_regions(self,
+    def compute_loss_with_nouns(self,
                                   imgs_query,
                                   modification_texts,
                                   imgs_target,
-                                  scan_info,
+                                  nouns,
                                   soft_triplet_loss=True):
-        mod_img1 = self.compose_img_text_with_regions(imgs_query, modification_texts, scan_info)
+        mod_img1 = self.compose_img_text_with_nouns(imgs_query, modification_texts, nouns)
         mod_img1 = self.normalization_layer(mod_img1)
         img2 = self.extract_img_feature(imgs_target)
         img2 = self.normalization_layer(img2)
@@ -305,7 +305,7 @@ def l2norm(X, dim, eps=1e-8):
     X = torch.div(X, norm)
     return X
 
-class TIRGWithSCAN(ImgEncoderTextEncoderBase):
+class TIRGEvolved(ImgEncoderTextEncoderBase):
     """The TIGR model.
 
     The method is described in
@@ -316,14 +316,7 @@ class TIRGWithSCAN(ImgEncoderTextEncoderBase):
 
     def __init__(self, texts, embed_dim):
         super(TIRGWithSCAN, self).__init__(texts, embed_dim)
-
-        import json
-        self.id2index = json.load(open("../meta.json", "r"))
-        self.img_enc = EncoderImage(2048, 1024,
-                                    precomp_enc_type='basic',
-                                    no_imgnorm=True)
-        if torch.cuda.is_available():
-            self.img_enc.cuda()
+        
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.gated_feature_composer = torch.nn.Sequential(
             ConcatWithLinearModule(),
@@ -339,92 +332,12 @@ class TIRGWithSCAN(ImgEncoderTextEncoderBase):
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
-        
-    def xattn_score_i2t_and_t2i(self, images, text_features, noun_features):
-        """
-        Images: (batch_size, n_regions, d) matrix of images
-        Captions: (batch_size, max_n_words, d) matrix of captions
-        CapLens: (batch_size) array of caption lengths
-        """
-        # using noun
-        weiContext_t2i, _ = func_attention(torch.cat((text_features.unsqueeze(1), 
-                                                      noun_features.unsqueeze(1)), 1),
-                                                      images,
-                                                      "softmax", smooth=9.)
-        
-        weiContext_i2t, _ = func_attention(images, torch.cat((text_features.unsqueeze(1), 
-                                                      noun_features.unsqueeze(1)), 1),
-                                                      "softmax", smooth=9.)
-        
-        # not using noun
-#         weiContext_t2i, _ = func_attention(text_features,
-#                                            images, "softmax", smooth=9.)
-        
-#         weiContext_i2t, _ = func_attention(images,
-#                                            text_features,
-#                                            "softmax", smooth=9.)
 
-        return weiContext_t2i, weiContext_i2t
-
-    #        return weiContext_i2t, weiContext_t2i
-    #         for i in range(2):
-    #             """
-    #                 word(query): (n_image, n_word, d)
-    #                 image(context): (n_image, n_region, d)
-    #                 weiContext: (n_image, n_region, d)
-    #                 attn: (n_image, n_word, n_region)
-    #             """
-    #             weiContext_i2t, attn_i2t = func_attention(images, captions, "softmax", smooth=9.)
-    #             # weiContext_t2i, attn_t2i = func_attention(captions, images, "softmax", smooth=9.)
-    #             print('i: ', i, 'weiContext_i2t', weiContext_i2t.shape)
-    # return weiContext_i2t #, weiContext_t2i
-
-    def extract_img_feature_with_attention(self, regions, text_features, noun_features):
-        weiContext_t2i, weiContext_i2t = self.xattn_score_i2t_and_t2i(regions, text_features, noun_features)
-        return weiContext_t2i, weiContext_i2t
-
-    def compose_img_text_with_regions(self, imgs, texts, scan_info):
-        img1_regions, nouns = scan_info
-        
-        # text_features = self.extract_text_feature(texts)
-        # noun_features = self.extract_text_feature(nouns)
-        
-        # text_features = l2norm(text_features, dim=-1)
-        # noun_features = l2norm(noun_features, dim=-1)
-
-        # img1_regions = torch.from_numpy(img1_regions).cuda()
-        # feats = self.img_enc(img1_regions)
-        
+    def compose_img_text_with_nouns(self, imgs, texts, nouns):
         img_features = self.extract_img_feature(imgs)
         text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, nouns)])
         text_features = torch.from_numpy(text_features).cuda()
 
-        
-        # weiContext_t2i, weiContext_i2t = self.extract_img_feature_with_attention(feats,
-        #                                                         text_features,
-        #                                                         noun_features)
-
-        # self.text_context = torch.split(weiContext_t2i, 1, 1)
-        # self.image_context = torch.split(weiContext_i2t, 1, 1)
-        
-        # self.image_context = [v.squeeze(1) for v in self.image_context]
-        # self.text_context = [v.squeeze(1) for v in self.text_context]
-        # print(weiContext_i2t.shape, self.image_context[0].shape)
-        
-        # img_features_mult = torch.tensor(img_features) 
-        # text_features_mult = torch.tensor(text_features) 
-        # for im_c in self.image_context:
-            # print(img_features.shape, im_c.shape)
-        #    img_features_mult += img_features * im_c.squeeze(1)
-        # for text_c in self.text_context:
-        #    text_features_mult += text_features * text_c.squeeze(1)
-            
-        # self.stacked = torch.cat([text_features_mult, 
-        #                           text_features], dim=1)
-        # self.stacked = text_features_mult
-        # self.img_features_mult = l2norm(img_features_mult, dim=-1)
-        # self.text_features_mult = l2norm(text_features_mult, dim=-1)
-        
         return self.compose_img_text_features(img_features, text_features)
 
     def compose_img_text_features(self, img_features, text_features):
@@ -432,119 +345,8 @@ class TIRGWithSCAN(ImgEncoderTextEncoderBase):
         f1 = self.gated_feature_composer((img_features, text_features))
         f2 = self.res_info_composer((img_features, text_features))
         
-        # f3 = self.res_info_composer((self.img_features_mult, self.text_features_mult))
-        f = F.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1] # + f3 * img_features * self.a[2] 
+        f = F.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         return f
-
-
-def l1norm(X, dim, eps=1e-8):
-    """L1-normalize columns of X
-    """
-    norm = torch.abs(X).sum(dim=dim, keepdim=True) + eps
-    X = torch.div(X, norm)
-    return X
-
-
-def l2norm(X, dim, eps=1e-8):
-    """L2-normalize columns of X
-    """
-    norm = torch.pow(X, 2).sum(dim=dim, keepdim=True).sqrt() + eps
-    X = torch.div(X, norm)
-    return X
-
-
-def EncoderImage(img_dim, embed_size, precomp_enc_type='basic',
-                 no_imgnorm=False):
-    """A wrapper to image encoders. Chooses between an different encoders
-    that uses precomputed image features.
-    """
-    if precomp_enc_type == 'basic':
-        img_enc = EncoderImagePrecomp(
-            img_dim, embed_size, no_imgnorm)
-    elif precomp_enc_type == 'weight_norm':
-        img_enc = EncoderImageWeightNormPrecomp(
-            img_dim, embed_size, no_imgnorm)
-    else:
-        raise ValueError("Unknown precomp_enc_type: {}".format(precomp_enc_type))
-
-    return img_enc
-
-
-class EncoderImagePrecomp(nn.Module):
-
-    def __init__(self, img_dim, embed_size, no_imgnorm=False):
-        super(EncoderImagePrecomp, self).__init__()
-        self.embed_size = embed_size
-        self.no_imgnorm = no_imgnorm
-        self.fc = nn.Linear(img_dim, embed_size)
-
-        self.init_weights()
-
-    def init_weights(self):
-        """Xavier initialization for the fully connected layer
-        """
-        r = np.sqrt(6.) / np.sqrt(self.fc.in_features +
-                                  self.fc.out_features)
-        self.fc.weight.data.uniform_(-r, r)
-        self.fc.bias.data.fill_(0)
-
-    def forward(self, images):
-        """Extract image feature vectors."""
-        # assuming that the precomputed features are already l2-normalized
-
-        features = self.fc(images)
-
-        # normalize in the joint embedding space
-        if not self.no_imgnorm:
-            features = l2norm(features, dim=-1)
-
-        return features
-
-    def load_state_dict(self, state_dict):
-        """Copies parameters. overwritting the default one to
-        accept state_dict from Full model
-        """
-        own_state = self.state_dict()
-        new_state = OrderedDict()
-        for name, param in state_dict.items():
-            if name in own_state:
-                new_state[name] = param
-
-        super(EncoderImagePrecomp, self).load_state_dict(new_state)
-
-
-class EncoderImageWeightNormPrecomp(nn.Module):
-
-    def __init__(self, img_dim, embed_size, no_imgnorm=False):
-        super(EncoderImageWeightNormPrecomp, self).__init__()
-        self.embed_size = embed_size
-        self.no_imgnorm = no_imgnorm
-        self.fc = weight_norm(nn.Linear(img_dim, embed_size), dim=None)
-
-    def forward(self, images):
-        """Extract image feature vectors."""
-        # assuming that the precomputed features are already l2-normalized
-
-        features = self.fc(images)
-
-        # normalize in the joint embedding space
-        if not self.no_imgnorm:
-            features = l2norm(features, dim=-1)
-
-        return features
-
-    def load_state_dict(self, state_dict):
-        """Copies parameters. overwritting the default one to
-        accept state_dict from Full model
-        """
-        own_state = self.state_dict()
-        new_state = OrderedDict()
-        for name, param in state_dict.items():
-            if name in own_state:
-                new_state[name] = param
-
-        super(EncoderImageWeightNormPrecomp, self).load_state_dict(new_state)
-
 
 class TIRGLastConv(ImgEncoderTextEncoderBase):
     """The TIGR model with spatial modification over the last conv layer.
@@ -600,61 +402,3 @@ class TIRGLastConv(ImgEncoderTextEncoderBase):
         x = x.view(x.size(0), -1)
         x = self.img_model.fc(x)
         return x
-
-
-def func_attention(query, context, raw_feature_norm, smooth, eps=1e-8):
-    """
-    query: (n_context, queryL, d)
-    context: (n_context, sourceL, d)
-    """
-    batch_size_q, queryL = query.size(0), query.size(1)
-    batch_size, sourceL = context.size(0), context.size(1)
-
-    # Get attention
-    # --> (batch, d, queryL)
-    queryT = torch.transpose(query, 1, 2)
-
-    # (batch, sourceL, d)(batch, d, queryL)
-    # --> (batch, sourceL, queryL)
-    attn = torch.bmm(context, queryT)
-    if raw_feature_norm == "softmax":
-        # --> (batch*sourceL, queryL)
-        attn = attn.view(batch_size * sourceL, queryL)
-        attn = torch.nn.Softmax()(attn)
-        # --> (batch, sourceL, queryL)
-        attn = attn.view(batch_size, sourceL, queryL)
-    elif raw_feature_norm == "l2norm":
-        attn = l2norm(attn, 2)
-    elif raw_feature_norm == "clipped_l2norm":
-        attn = nn.LeakyReLU(0.1)(attn)
-        attn = l2norm(attn, 2)
-    elif raw_feature_norm == "l1norm":
-        attn = l1norm(attn, 2)
-    elif raw_feature_norm == "clipped_l1norm":
-        attn = torch.nn.LeakyReLU(0.1)(attn)
-        attn = l1norm(attn, 2)
-    elif raw_feature_norm == "clipped":
-        attn = torch.nn.LeakyReLU(0.1)(attn)
-    elif raw_feature_norm == "no_norm":
-        pass
-    else:
-        raise ValueError("unknown first norm type:", raw_feature_norm)
-    # --> (batch, queryL, sourceL)
-    attn = torch.transpose(attn, 1, 2).contiguous()
-    # --> (batch*queryL, sourceL)
-    attn = attn.view(batch_size * queryL, sourceL)
-    attn = torch.nn.Softmax()(attn * smooth)
-    # --> (batch, queryL, sourceL)
-    attn = attn.view(batch_size, queryL, sourceL)
-    # --> (batch, sourceL, queryL)
-    attnT = torch.transpose(attn, 1, 2).contiguous()
-
-    # --> (batch, d, sourceL)
-    contextT = torch.transpose(context, 1, 2)
-    # (batch x d x sourceL)(batch x sourceL x queryL)
-    # --> (batch, d, queryL)
-    weightedContext = torch.bmm(contextT, attnT)
-    # --> (batch, queryL, d)
-    weightedContext = torch.transpose(weightedContext, 1, 2)
-
-    return weightedContext, attnT

@@ -143,11 +143,11 @@ def create_model_and_optimizer(opt, texts):
   elif opt.model == 'tirg_lastconv':
     model = img_text_composition_models.TIRGLastConv(
         texts, embed_dim=opt.embed_dim)
-  elif opt.model == 'tirg_scan':
+  elif opt.model == 'tirg_evolved':
     model = img_text_composition_models.TIRGWithSCAN(texts, embed_dim=opt.embed_dim)
   else:
     print 'Invalid model', opt.model
-    print 'available: imgonly, textonly, concat, tirg or tirg_lastconv'
+    print 'available: imgonly, textonly, concat, tirg, tirg_lastconv or tirg_evolved'
     sys.exit()
   model = model.cuda()
 
@@ -227,28 +227,25 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
     def training_1_iter(data):
       assert type(data) is list
       img1 = np.stack([d['source_img_data'] for d in data])
-      img1_regions = np.stack([d["source_regions_data"] for d in data])
-      # w2v_data = np.stack([d["w2v_data"] for d in data])
       nouns = [str(d['noun']) for d in data]
       mods = [t.decode('utf-8') for t in nouns]
       img1 = torch.from_numpy(img1).float()
       img1 = torch.autograd.Variable(img1).cuda()
+
       img2 = np.stack([d['target_img_data'] for d in data])
       img2 = torch.from_numpy(img2).float()
       img2 = torch.autograd.Variable(img2).cuda()
       mods = [str(d['mod']['str']) for d in data]
       mods = [t.decode('utf-8') for t in mods]
-      
-      scan_info  = img1_regions, nouns
 
       # compute loss
       losses = []
       if opt.loss == 'soft_triplet' and opt.model != 'tirg_scan':
         loss_value = model.compute_loss(
             img1, mods, img2, soft_triplet_loss=True)
-      elif opt.loss == 'soft_triplet' and opt.model == 'tirg_scan':
-        loss_value = model.compute_loss_with_regions(
-            img1, mods, img2, scan_info, soft_triplet_loss=True)
+      elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
+        loss_value = model.compute_loss_with_nouns(
+            img1, mods, img2, nouns, soft_triplet_loss=True)
 
       elif opt.loss == 'batch_based_classification':
         loss_value = model.compute_loss(
