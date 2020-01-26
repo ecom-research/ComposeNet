@@ -52,6 +52,7 @@ def parse_opt():
   parser.add_argument('--num_iters', type=int, default=210000)
   parser.add_argument('--loss', type=str, default='soft_triplet')
   parser.add_argument('--loader_num_workers', type=int, default=4)
+  parser.add_argument('--log_dir', type=str, default='../logs/')
   args = parser.parse_args()
   return args
 
@@ -144,7 +145,7 @@ def create_model_and_optimizer(opt, texts):
     model = img_text_composition_models.TIRGLastConv(
         texts, embed_dim=opt.embed_dim)
   elif opt.model == 'tirg_evolved':
-    model = img_text_composition_models.TIRGWithSCAN(texts, embed_dim=opt.embed_dim)
+    model = img_text_composition_models.TIRGEvolved(texts, embed_dim=opt.embed_dim)
   else:
     print 'Invalid model', opt.model
     print 'available: imgonly, textonly, concat, tirg, tirg_lastconv or tirg_evolved'
@@ -240,7 +241,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
 
       # compute loss
       losses = []
-      if opt.loss == 'soft_triplet' and opt.model != 'tirg_scan':
+      if opt.loss == 'soft_triplet' and opt.model != 'tirg_evolved':
         loss_value = model.compute_loss(
             img1, mods, img2, soft_triplet_loss=True)
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
@@ -292,7 +293,14 @@ def main():
   for k in opt.__dict__.keys():
     print '    ', k, ':', str(opt.__dict__[k])
 
-  logger = SummaryWriter(comment=opt.comment)
+
+  import socket
+  import os
+  from datetime import datetime
+  current_time = datetime.now().strftime('%b%d_%H-%M-%S')
+  logdir = os.path.join(opt.log_dir, current_time + '_' + socket.gethostname() + opt.comment)
+
+  logger = SummaryWriter(logdir)
   print 'Log files saved to', logger.file_writer.get_logdir()
   for k in opt.__dict__.keys():
     logger.add_text(k, str(opt.__dict__[k]))

@@ -315,7 +315,7 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
     """
 
     def __init__(self, texts, embed_dim):
-        super(TIRGWithSCAN, self).__init__(texts, embed_dim)
+        super(TIRGEvolved, self).__init__(texts, embed_dim)
         
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.gated_feature_composer = torch.nn.Sequential(
