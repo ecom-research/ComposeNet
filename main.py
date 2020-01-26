@@ -228,10 +228,11 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
     def training_1_iter(data):
       assert type(data) is list
       img1 = np.stack([d['source_img_data'] for d in data])
-      nouns = [str(d['noun']) for d in data]
-      mods = [t.decode('utf-8') for t in nouns]
       img1 = torch.from_numpy(img1).float()
       img1 = torch.autograd.Variable(img1).cuda()
+      if opt.dataset == 'mitstates' and opt.model == 'tirg_evolved':
+          nouns = [str(d['noun']) for d in data]
+      target_captions = [str(d['target_caption']) for d in data]
 
       img2 = np.stack([d['target_img_data'] for d in data])
       img2 = torch.from_numpy(img2).float()
@@ -246,11 +247,14 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
             img1, mods, img2, soft_triplet_loss=True)
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
         loss_value = model.compute_loss_with_nouns(
-            img1, mods, img2, nouns, soft_triplet_loss=True)
-
+                img1, mods, img2, nouns, soft_triplet_loss=True)
       elif opt.loss == 'batch_based_classification':
-        loss_value = model.compute_loss(
-            img1, mods, img2, soft_triplet_loss=False)
+        if opt.model == 'tirg_evolved':
+            loss_value = model.compute_loss_with_nouns(
+                img1, mods, img2, target_captions, soft_triplet_loss=False) # original approach
+        else:
+            loss_value = model.compute_loss(
+                img1, mods, img2, soft_triplet_loss=False)
       else:
         print 'Invalid loss function', opt.loss
         sys.exit()

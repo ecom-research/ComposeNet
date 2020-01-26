@@ -373,6 +373,7 @@ class Fashion200k(BaseDataset):
     out['target_img_data'] = self.get_img(target_idx)
     out['target_caption'] = self.imgs[target_idx]['captions'][0]
     out['mod'] = {'str': mod_str}
+    
     return out
 
   def get_img(self, idx, raw_img=False):

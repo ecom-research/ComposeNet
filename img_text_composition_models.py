@@ -333,10 +333,16 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
 
-    def compose_img_text_with_nouns(self, imgs, texts, nouns):
+    def compose_img_text_with_nouns(self, imgs, texts, captions):
+        # for mitstates
+#         img_features = self.extract_img_feature(imgs)
+#         text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, nouns)])
+#         text_features = torch.from_numpy(text_features).cuda()
+        # for fashion200k
         img_features = self.extract_img_feature(imgs)
-        text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, nouns)])
+        text_features = bc.encode(captions)
         text_features = torch.from_numpy(text_features).cuda()
+        
 
         return self.compose_img_text_features(img_features, text_features)
 
