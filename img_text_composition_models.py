@@ -338,7 +338,7 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
 #         img_features = self.extract_img_feature(imgs)
 #         text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, nouns)])
 #         text_features = torch.from_numpy(text_features).cuda()
-        # for fashion200k
+        # for fashion200k and css
         img_features = self.extract_img_feature(imgs)
         text_features = bc.encode(captions)
         text_features = torch.from_numpy(text_features).cuda()
@@ -351,7 +351,7 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         f1 = self.gated_feature_composer((img_features, text_features))
         f2 = self.res_info_composer((img_features, text_features))
         
-        f = F.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
+        f = torch.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         return f
 
 class TIRGLastConv(ImgEncoderTextEncoderBase):

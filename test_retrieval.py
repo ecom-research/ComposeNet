@@ -30,6 +30,7 @@ def test(opt, model, testset):
   all_queries = []
   all_target_captions = []
   if test_queries:
+    
     # compute test query features
     imgs = []
     mods = []
@@ -38,7 +39,10 @@ def test(opt, model, testset):
       torch.cuda.empty_cache()
       imgs += [testset.get_img(t['source_img_id'])]
       mods += [t['mod']['str']]
-      nouns += [str(t["noun"])]
+      if (opt.dataset == 'fashion200k') or (opt.dataset == 'css3d'):
+        nouns += [str(t['target_caption'])]
+      else:
+        nouns += [str(t["noun"])]
       if len(imgs) >= opt.batch_size or t is test_queries[-1]:
         if 'torch' not in str(type(imgs[0])):
           imgs = [torch.from_numpy(d).float() for d in imgs]
@@ -81,13 +85,16 @@ def test(opt, model, testset):
       torch.cuda.empty_cache()
       item = testset[i]
       imgs += [item['source_img_data']]
-      nouns += [str(item["noun"])]
+      if (opt.dataset == 'fashion200k') or (opt.dataset == 'css3d'):
+        nouns += [str(item['target_caption'])]
+      else:
+        nouns += [str(item["noun"])]
       mods += [item['mod']['str']]
       if len(imgs) > opt.batch_size or i == 9999:
         imgs = torch.stack(imgs).float() ## !!!
         imgs = torch.autograd.Variable(imgs)
         mods = [t.decode('utf-8') for t in mods]
-        nouns = [t.decode('utf-8') for t in nouns]
+        # nouns = [t.decode('utf-8') for t in nouns]
         if opt.model == 'tirg_evolved':
             f = model.compose_img_text_with_nouns(imgs.cuda(), mods, nouns).data.cpu().numpy()
         else:
