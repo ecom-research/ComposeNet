@@ -232,7 +232,8 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
       img1 = torch.autograd.Variable(img1).cuda()
       if opt.dataset == 'mitstates' and opt.model == 'tirg_evolved':
           nouns = [str(d['noun']) for d in data]
-      target_captions = [str(d['target_caption']) for d in data]
+      elif opt.dataset == 'fashion200k' and opt.model == 'tirg_evolved':
+          target_captions = [str(d['target_caption']) for d in data]
 
       img2 = np.stack([d['target_img_data'] for d in data])
       img2 = torch.from_numpy(img2).float()
@@ -246,8 +247,12 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
         loss_value = model.compute_loss(
             img1, mods, img2, soft_triplet_loss=True)
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        loss_value = model.compute_loss_with_nouns(
-                img1, mods, img2, nouns, soft_triplet_loss=True)
+        if opt.dataset == 'css3d':
+            loss_value = model.compute_loss_with_nouns(
+                    img1, mods, img2, mods, soft_triplet_loss=True)
+        elif opt.dataset == 'fashion200k':
+            loss_value = model.compute_loss_with_nouns(
+                    img1, mods, img2, nouns, soft_triplet_loss=True)
       elif opt.loss == 'batch_based_classification':
         if opt.model == 'tirg_evolved':
             loss_value = model.compute_loss_with_nouns(

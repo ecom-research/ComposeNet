@@ -39,8 +39,10 @@ def test(opt, model, testset):
       torch.cuda.empty_cache()
       imgs += [testset.get_img(t['source_img_id'])]
       mods += [t['mod']['str']]
-      if (opt.dataset == 'fashion200k') or (opt.dataset == 'css3d'):
+      if (opt.dataset == 'fashion200k'):
         nouns += [str(t['target_caption'])]
+      elif (opt.dataset == 'css3d'):
+        nouns += [t['mod']['str']]
       else:
         nouns += [str(t["noun"])]
       if len(imgs) >= opt.batch_size or t is test_queries[-1]:
@@ -85,10 +87,12 @@ def test(opt, model, testset):
       torch.cuda.empty_cache()
       item = testset[i]
       imgs += [item['source_img_data']]
-      if (opt.dataset == 'fashion200k') or (opt.dataset == 'css3d'):
-        nouns += [str(item['target_caption'])]
+      if (opt.dataset == 'fashion200k'):
+        nouns += [str(t['target_caption'])]
+      elif (opt.dataset == 'css3d'):
+        nouns += [t['mod']['str']]
       else:
-        nouns += [str(item["noun"])]
+        nouns += [str(t["noun"])]
       mods += [item['mod']['str']]
       if len(imgs) > opt.batch_size or i == 9999:
         imgs = torch.stack(imgs).float() ## !!!
