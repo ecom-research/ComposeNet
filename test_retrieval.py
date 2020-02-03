@@ -51,7 +51,7 @@ def test(opt, model, testset):
         imgs = torch.stack(imgs).float()
         imgs = torch.autograd.Variable(imgs).cuda()
         mods = [t.decode('utf-8') for t in mods]
-        if opt.model == 'tirg_evolved':
+        if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
             f = model.compose_img_text_with_nouns(imgs.cuda(), mods, nouns).data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
@@ -99,7 +99,7 @@ def test(opt, model, testset):
         imgs = torch.autograd.Variable(imgs)
         mods = [t.decode('utf-8') for t in mods]
         # nouns = [t.decode('utf-8') for t in nouns]
-        if opt.model == 'tirg_evolved':
+        if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
             f = model.compose_img_text_with_nouns(imgs.cuda(), mods, nouns).data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()

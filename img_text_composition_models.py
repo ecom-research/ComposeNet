@@ -50,7 +50,7 @@ class MultiplyModule(torch.nn.Module):
         self.features = torch.nn.Sequential(
             torch.nn.BatchNorm1d(1024),
             torch.nn.Linear(1024, 1024), # 1024 for res?
-            torch.nn.Dropout(p=0.2),
+            torch.nn.Dropout(p=0.7),
             torch.nn.ReLU()
         )
 
@@ -74,7 +74,7 @@ class ConcatWithLinearModule(torch.nn.Module):
         self.image_features = torch.nn.Sequential(
             torch.nn.BatchNorm1d(512),
             torch.nn.Linear(512, 512),
-            torch.nn.Dropout(p=0.5),
+            torch.nn.Dropout(p=0.2),
             torch.nn.ReLU(),
             torch.nn.Linear(512, 512)
         )
@@ -83,6 +83,38 @@ class ConcatWithLinearModule(torch.nn.Module):
         x1 = self.image_features(x[0])
         x2 = self.bert_features(x[1])
         concat_x = torch.cat([x1, x2], 1)
+
+        return concat_x
+    
+class ConcatWithLinearAndCoordModule(torch.nn.Module):
+
+    def __init__(self):
+        super(ConcatWithLinearAndCoordModule, self).__init__()
+        self.bert_features = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(768),
+            torch.nn.Linear(768, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512)
+        )
+        self.image_features = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(512),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512)
+        )
+        self.weight1 = torch.nn.Parameter(torch.randn(512, 512))
+        self.weight2 = torch.nn.Parameter(torch.randn(512, 512))
+
+        self.bias1 = torch.nn.Parameter(torch.randn(512))
+        self.bias2 = torch.nn.Parameter(torch.randn(512))
+        
+    def forward(self, x):
+        x1 = self.image_features(x[0])
+        x2 = self.bert_features(x[1])
+        x3 = self.image_features(x[2])
+        y = torch.nn.functional.linear(x1, self.weight1, self.bias1) + \
+            torch.nn.functional.linear(x3, self.weight2, self.bias2)
+        concat_x = torch.cat([y, x2], 1)
 
         return concat_x
     
@@ -319,19 +351,36 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.gated_feature_composer = torch.nn.Sequential(
-            ConcatWithLinearModule(),
+            ConcatWithLinearAndCoordModule(),
             torch.nn.BatchNorm1d(2 * embed_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
         self.res_info_composer = torch.nn.Sequential(
-            ConcatWithLinearModule(), 
+            ConcatWithLinearAndCoordModule(), 
             torch.nn.BatchNorm1d(2 * embed_dim), 
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, 2 * embed_dim), 
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
+        
+        self.coord_extractor = torch.nn.Sequential(
+            torch.nn.BatchNorm2d(3),
+            CoordConv(3, 6), # conv inside
+            torch.nn.ReLU(inplace=True),
+            torch.nn.MaxPool2d(2, 2),
+            torch.nn.Conv2d(6, 16, 5),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.MaxPool2d(2, 2),
+            torch.nn.Flatten(),
+            torch.nn.Linear(1664, 512)
+            
+        )
+        
+    def extract_coord_info(self, imgs):
+        return self.coord_extractor(imgs)
+   
 
     def compose_img_text_with_nouns(self, imgs, texts, captions):
         # for mitstates
@@ -340,16 +389,17 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
 #         text_features = torch.from_numpy(text_features).cuda()
         # for fashion200k and css
         img_features = self.extract_img_feature(imgs)
+        coord_img_features = self.extract_coord_info(imgs)
         text_features = bc.encode(captions)
         text_features = torch.from_numpy(text_features).cuda()
         
 
-        return self.compose_img_text_features(img_features, text_features)
+        return self.compose_img_text_features(img_features, text_features, coord_img_features)
 
-    def compose_img_text_features(self, img_features, text_features):
+    def compose_img_text_features(self, img_features, text_features, coord_img_features):
 
-        f1 = self.gated_feature_composer((img_features, text_features))
-        f2 = self.res_info_composer((img_features, text_features))
+        f1 = self.gated_feature_composer((img_features, text_features, coord_img_features))
+        f2 = self.res_info_composer((img_features, text_features, coord_img_features))
         
         f = torch.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         return f
@@ -400,6 +450,7 @@ class TIRGLastConv(ImgEncoderTextEncoderBase):
         y = y.reshape((y.shape[0], y.shape[1], 1, 1)).repeat(
             1, 1, x.shape[2], x.shape[3])
         z = torch.cat((x, y), dim=1)
+
         t = self.mod2d(z)
         tgate = self.mod2d_gate(z)
         x = self.a[0] * F.sigmoid(tgate) * x + self.a[1] * t
@@ -407,4 +458,149 @@ class TIRGLastConv(ImgEncoderTextEncoderBase):
         x = self.img_model.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.img_model.fc(x)
+
         return x
+    
+    
+class ConcatWithConvModule(torch.nn.Module):
+
+    def __init__(self):
+        super(ConcatWithConvModule, self).__init__()
+        self.image_features = torch.nn.Sequential(
+            torch.nn.BatchNorm2d(512),
+            torch.nn.Conv2d(512, 512, 3, stride=1, padding=1),
+            torch.nn.Dropout(p=0.5),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(512, 512, 3, stride=1, padding=1)
+        )
+        self.bert_features = torch.nn.Sequential(
+            torch.nn.BatchNorm2d(768),
+            torch.nn.Conv2d(768, 512, 3, stride=1, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(512, 512, 3, stride=1, padding=1)
+        )
+
+    def forward(self, x):
+        x1 = self.image_features(x[0])
+        x2 = self.bert_features(x[1])
+        concat_x = torch.cat([x1, x2], 1)
+
+        return concat_x
+    
+class TIRGLastConvEvolved(ImgEncoderTextEncoderBase):
+    """The TIGR model with spatial modification over the last conv layer.
+
+    The method is described in
+    Nam Vo, Lu Jiang, Chen Sun, Kevin Murphy, Li-Jia Li, Li Fei-Fei, James Hays.
+    "Composing Text and Image for Image Retrieval - An Empirical Odyssey"
+    CVPR 2019. arXiv:1812.07119
+    """
+
+    def __init__(self, texts, embed_dim):
+        super(TIRGLastConvEvolved, self).__init__(texts, embed_dim)
+
+        self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
+        self.mod2d = torch.nn.Sequential(
+            ConcatWithConvModule(),
+            torch.nn.BatchNorm2d(512 + embed_dim),
+            torch.nn.Conv2d(512 + embed_dim, 512 + embed_dim, [3, 3], padding=1),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(512 + embed_dim, 512, [3, 3], padding=1),
+        )
+
+        self.mod2d_gate = torch.nn.Sequential(
+            ConcatWithConvModule(),
+            torch.nn.BatchNorm2d(512 + embed_dim),
+            torch.nn.Conv2d(512 + embed_dim, 512 + embed_dim, [3, 3], padding=1),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(512 + embed_dim, 512, [3, 3], padding=1),
+        )
+        
+
+    def compose_img_text_with_nouns(self, imgs, texts, nouns): #excessive
+        text_features = bc.encode(texts)
+        text_features = torch.from_numpy(text_features).cuda()
+        
+        x = imgs
+        x = self.img_model.conv1(x)
+        x = self.img_model.bn1(x)
+        x = self.img_model.relu(x)
+        x = self.img_model.maxpool(x)
+
+        x = self.img_model.layer1(x)
+        x = self.img_model.layer2(x)
+        x = self.img_model.layer3(x)
+        img_features = self.img_model.layer4(x)
+
+
+        # mod
+        y = text_features
+        y = y.reshape((y.shape[0], y.shape[1], 1, 1)).repeat(
+            1, 1, img_features.shape[2], img_features.shape[3])
+        
+        t = self.mod2d((img_features, y))
+        tgate = self.mod2d_gate((img_features, y))
+        x = self.a[0] * F.sigmoid(tgate) * img_features + self.a[1] * t
+
+        x = self.img_model.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.img_model.fc(x)
+        
+        return x
+    
+    
+    
+'''
+An alternative implementation for PyTorch with auto-infering the x-y dimensions.
+'''
+class AddCoords(nn.Module):
+
+    def __init__(self, with_r=False):
+        super(AddCoords, self).__init__()
+        self.with_r = with_r
+
+    def forward(self, input_tensor):
+        """
+        Args:
+            input_tensor: shape(batch, channel, x_dim, y_dim)
+        """
+        batch_size, _, x_dim, y_dim = input_tensor.size()
+
+        xx_channel = torch.arange(x_dim).repeat(1, y_dim, 1)
+        yy_channel = torch.arange(y_dim).repeat(1, x_dim, 1).transpose(1, 2)
+
+        xx_channel = xx_channel.float() / (x_dim - 1)
+        yy_channel = yy_channel.float() / (y_dim - 1)
+
+        xx_channel = xx_channel * 2 - 1
+        yy_channel = yy_channel * 2 - 1
+
+        xx_channel = xx_channel.repeat(batch_size, 1, 1, 1).transpose(2, 3)
+        yy_channel = yy_channel.repeat(batch_size, 1, 1, 1).transpose(2, 3)
+
+        ret = torch.cat([
+            input_tensor,
+            xx_channel.type_as(input_tensor),
+            yy_channel.type_as(input_tensor)], dim=1)
+
+        if self.with_r:
+            rr = torch.sqrt(torch.pow(xx_channel.type_as(input_tensor) - 0.5, 2) + torch.pow(yy_channel.type_as(input_tensor) - 0.5, 2))
+            ret = torch.cat([ret, rr], dim=1)
+
+        return ret
+
+
+class CoordConv(nn.Module):
+
+    def __init__(self, in_channels, out_channels, with_r=False, kernel_size=5, stride=3, padding=2):
+        super(CoordConv, self).__init__()
+        self.addcoords = AddCoords(with_r=with_r)
+        in_size = in_channels+2
+        if with_r:
+            in_size += 1
+        self.conv = torch.nn.Conv2d(in_size, out_channels, kernel_size=5, stride=3, padding=2)
+
+    def forward(self, x):
+        ret = self.addcoords(x)
+        ret = self.conv(ret)
+        return ret

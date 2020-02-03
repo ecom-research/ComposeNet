@@ -53,6 +53,8 @@ def parse_opt():
   parser.add_argument('--loss', type=str, default='soft_triplet')
   parser.add_argument('--loader_num_workers', type=int, default=4)
   parser.add_argument('--log_dir', type=str, default='../logs/')
+  parser.add_argument('--test_only', type=bool, default=False)
+  parser.add_argument('--model_checkpoint', type=str, default='')
   args = parser.parse_args()
   return args
 
@@ -146,6 +148,8 @@ def create_model_and_optimizer(opt, texts):
         texts, embed_dim=opt.embed_dim)
   elif opt.model == 'tirg_evolved':
     model = img_text_composition_models.TIRGEvolved(texts, embed_dim=opt.embed_dim)
+  elif opt.model == 'tirg_lastconv_evolved':
+    model = img_text_composition_models.TIRGLastConvEvolved(texts, embed_dim=opt.embed_dim)
   else:
     print 'Invalid model', opt.model
     print 'available: imgonly, textonly, concat, tirg, tirg_lastconv or tirg_evolved'
@@ -240,18 +244,20 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
       img2 = torch.autograd.Variable(img2).cuda()
       mods = [str(d['mod']['str']) for d in data]
       mods = [t.decode('utf-8') for t in mods]
+      
+      if opt.dataset == 'css3d':
+          nouns = mods
 
       # compute loss
       losses = []
-      if opt.loss == 'soft_triplet' and opt.model != 'tirg_evolved':
+      if opt.loss == 'soft_triplet' and opt.model not in ['tirg_evolved', 'tirg_lastconv_evolved']:
         loss_value = model.compute_loss(
             img1, mods, img2, soft_triplet_loss=True)
-      elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        if opt.dataset == 'css3d':
-            loss_value = model.compute_loss_with_nouns(
+      elif opt.model == 'tirg_lastconv_evolved':
+        loss_value = model.compute_loss_with_nouns(
                     img1, mods, img2, mods, soft_triplet_loss=True)
-        elif opt.dataset == 'fashion200k':
-            loss_value = model.compute_loss_with_nouns(
+      elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
+        loss_value = model.compute_loss_with_nouns(
                     img1, mods, img2, nouns, soft_triplet_loss=True)
       elif opt.loss == 'batch_based_classification':
         if opt.model == 'tirg_evolved':
@@ -317,7 +323,23 @@ def main():
   trainset, testset = load_dataset(opt)
   model, optimizer = create_model_and_optimizer(
       opt, [t.decode('utf-8') for t in trainset.get_all_texts()])
-
+    
+  if opt.test_only:
+    print('Doing test only')
+    checkpoint = torch.load(opt.model_checkpoint)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    it = checkpoint['it']
+    model.eval()
+    tests = []
+    for name, dataset in [('train', trainset), ('test', testset)]:
+      t = test_retrieval.test(opt, model, dataset)
+      tests += [(name + ' ' + metric_name, metric_value)
+                for metric_name, metric_value in t]
+    for metric_name, metric_value in tests:
+      logger.add_scalar(metric_name, metric_value, it)
+      print '    ', metric_name, round(metric_value, 4)
+    return
+        
   train_loop(opt, logger, trainset, testset, model, optimizer)
   logger.close()
 
