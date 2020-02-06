@@ -184,6 +184,7 @@ def create_model_and_optimizer(opt, texts):
 def train_loop(opt, logger, trainset, testset, model, optimizer):
   """Function for train loop"""
   print 'Begin training'
+  torch.backends.cudnn.benchmark = True
   losses_tracking = {}
   it = 0
   epoch = -1
@@ -235,9 +236,9 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
       img1 = torch.from_numpy(img1).float()
       img1 = torch.autograd.Variable(img1).cuda()
       if opt.dataset == 'mitstates' and opt.model == 'tirg_evolved':
-          nouns = [str(d['noun']) for d in data]
+          extra_data = [str(d['noun']) for d in data]
       elif opt.dataset == 'fashion200k' and opt.model == 'tirg_evolved':
-          target_captions = [str(d['target_caption']) for d in data]
+          extra_data = [str(d['target_caption']) for d in data]
 
       img2 = np.stack([d['target_img_data'] for d in data])
       img2 = torch.from_numpy(img2).float()
@@ -246,26 +247,53 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
       mods = [t.decode('utf-8') for t in mods]
       
       if opt.dataset == 'css3d':
-          nouns = mods
+          objects = [d['source_img_objects'] for d in data]
+          extra_data = []
+          for obj in objects:
+              obj_desc = []
+              for desc in obj:
+                  if desc['shape']:
+                      obj_desc.append(desc['pos_str'] + ' ' + desc['size'] + ' ' + desc['color'] + ' ' + desc['shape'])
+              extra_data.append(obj_desc)
+
 
       # compute loss
       losses = []
+      # original tirg
       if opt.loss == 'soft_triplet' and opt.model not in ['tirg_evolved', 'tirg_lastconv_evolved']:
-        loss_value = model.compute_loss(
-            img1, mods, img2, soft_triplet_loss=True)
+        loss_value = model.compute_loss(img1, 
+                                        mods, 
+                                        img2, 
+                                        soft_triplet_loss=True)
+      # experiments with lastconv
       elif opt.model == 'tirg_lastconv_evolved':
-        loss_value = model.compute_loss_with_nouns(
-                    img1, mods, img2, mods, soft_triplet_loss=True)
+        loss_value = model.compute_loss_with_extra_data(img1, 
+                                                        mods, 
+                                                        img2, 
+                                                        mods, # hard_coded 
+                                                        soft_triplet_loss=True)
+        
+      # tirg evolved
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        loss_value = model.compute_loss_with_nouns(
-                    img1, mods, img2, nouns, soft_triplet_loss=True)
+        loss_value = model.compute_loss_with_extra_data(img1, 
+                                                        mods, 
+                                                        img2, 
+                                                        extra_data, 
+                                                        soft_triplet_loss=True)
+        
+      # mitstates case
       elif opt.loss == 'batch_based_classification':
         if opt.model == 'tirg_evolved':
-            loss_value = model.compute_loss_with_nouns(
-                img1, mods, img2, target_captions, soft_triplet_loss=False) # original approach
+            loss_value = model.compute_loss_with_extra_data(img1, 
+                                                            mods, 
+                                                            img2, 
+                                                            extra_data, 
+                                                            soft_triplet_loss=False) # original approach
         else:
-            loss_value = model.compute_loss(
-                img1, mods, img2, soft_triplet_loss=False)
+            loss_value = model.compute_loss(img1, 
+                                            mods, 
+                                            img2, 
+                                            soft_triplet_loss=False)
       else:
         print 'Invalid loss function', opt.loss
         sys.exit()

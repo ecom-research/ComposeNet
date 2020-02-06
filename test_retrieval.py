@@ -34,17 +34,25 @@ def test(opt, model, testset):
     # compute test query features
     imgs = []
     mods = []
-    nouns = []
+    extra_data = []
     for t in tqdm(test_queries):
       torch.cuda.empty_cache()
       imgs += [testset.get_img(t['source_img_id'])]
       mods += [t['mod']['str']]
       if (opt.dataset == 'fashion200k'):
-        nouns += [str(t['target_caption'])]
+        extra_data += [str(t['target_caption'])]
       elif (opt.dataset == 'css3d'):
-        nouns += [t['mod']['str']]
+        # extra_data += [t['mod']['str']]
+        objects = t['source_img_objects']
+        obj_data = []
+        for obj in objects:
+            if obj['shape']:
+                obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
+                
+        # print('obj_data', obj_data)
+        extra_data.append(obj_data)
       else:
-        nouns += [str(t["noun"])]
+        extra_data += [str(t["noun"])]
       if len(imgs) >= opt.batch_size or t is test_queries[-1]:
         if 'torch' not in str(type(imgs[0])):
           imgs = [torch.from_numpy(d).float() for d in imgs]
@@ -52,13 +60,13 @@ def test(opt, model, testset):
         imgs = torch.autograd.Variable(imgs).cuda()
         mods = [t.decode('utf-8') for t in mods]
         if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
-            f = model.compose_img_text_with_nouns(imgs.cuda(), mods, nouns).data.cpu().numpy()
+            f = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data).data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
         all_queries += [f]
         imgs = []
         mods = []
-        nouns = []
+        extra_data = []
     all_queries = np.concatenate(all_queries)
     all_target_captions = [t['target_caption'] for t in test_queries]
 
@@ -82,17 +90,25 @@ def test(opt, model, testset):
     imgs0 = []
     imgs = []
     mods = []
-    nouns = []
+    extra_data = []
     for i in range(10000):
       torch.cuda.empty_cache()
       item = testset[i]
       imgs += [item['source_img_data']]
       if (opt.dataset == 'fashion200k'):
-        nouns += [str(t['target_caption'])]
+        extra_data += [str(t['target_caption'])]
       elif (opt.dataset == 'css3d'):
-        nouns += [t['mod']['str']]
+        # extra_data += [t['mod']['str']]
+        objects = t['source_img_objects']
+        obj_data = []
+        for obj in objects:
+            if obj['shape']:
+                obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
+                
+        # print('obj_data', obj_data)
+        extra_data.append(obj_data)
       else:
-        nouns += [str(t["noun"])]
+        extra_data += [str(t["noun"])]
       mods += [item['mod']['str']]
       if len(imgs) > opt.batch_size or i == 9999:
         imgs = torch.stack(imgs).float() ## !!!
@@ -100,12 +116,12 @@ def test(opt, model, testset):
         mods = [t.decode('utf-8') for t in mods]
         # nouns = [t.decode('utf-8') for t in nouns]
         if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
-            f = model.compose_img_text_with_nouns(imgs.cuda(), mods, nouns).data.cpu().numpy()
+            f = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data).data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
         all_queries += [f]
         imgs = []
-        nouns = []
+        extra_data = []
         mods = []
       imgs0 += [item['target_img_data']]
       if len(imgs0) > opt.batch_size or i == 9999:

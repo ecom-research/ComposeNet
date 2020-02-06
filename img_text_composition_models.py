@@ -21,6 +21,7 @@ import torch
 import torchvision
 import torch.nn.functional as F
 import text_model
+import re
 import torch_functions
 import torch.nn as nn
 from torch.autograd import Variable
@@ -29,7 +30,9 @@ from torch.nn.utils.weight_norm import weight_norm
 import torch.backends.cudnn as cudnn
 from torch.nn.utils.clip_grad import clip_grad_norm
 from bert_serving.client import BertClient
+from gensim.models import KeyedVectors
 
+wv = KeyedVectors.load('../tirg-with-scan/wordvectors-300.kv', mmap='r')
 
 bc = BertClient()
 
@@ -65,16 +68,20 @@ class ConcatWithLinearModule(torch.nn.Module):
 
     def __init__(self):
         super(ConcatWithLinearModule, self).__init__()
+        # layers commented out for css3d experiments
         self.bert_features = torch.nn.Sequential(
             torch.nn.BatchNorm1d(768),
+            torch.nn.ReLU(),
             torch.nn.Linear(768, 512),
+            torch.nn.Dropout(p=0.5),
             torch.nn.ReLU(),
             torch.nn.Linear(512, 512)
         )
         self.image_features = torch.nn.Sequential(
             torch.nn.BatchNorm1d(512),
+            torch.nn.ReLU(),
             torch.nn.Linear(512, 512),
-            torch.nn.Dropout(p=0.2),
+            # torch.nn.Dropout(p=0.2),
             torch.nn.ReLU(),
             torch.nn.Linear(512, 512)
         )
@@ -91,31 +98,42 @@ class ConcatWithLinearAndCoordModule(torch.nn.Module):
     def __init__(self):
         super(ConcatWithLinearAndCoordModule, self).__init__()
         self.bert_features = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(768),
-            torch.nn.Linear(768, 512),
+            # torch.nn.BatchNorm1d(300),
+            torch.nn.Linear(300, 512),
+            # torch.nn.Dropout(p=0.5),
             torch.nn.ReLU(),
             torch.nn.Linear(512, 512)
         )
         self.image_features = torch.nn.Sequential(
             torch.nn.BatchNorm1d(512),
             torch.nn.Linear(512, 512),
+            # torch.nn.Dropout(p=0.5),
             torch.nn.ReLU(),
             torch.nn.Linear(512, 512)
         )
-        self.weight1 = torch.nn.Parameter(torch.randn(512, 512))
-        self.weight2 = torch.nn.Parameter(torch.randn(512, 512))
+        # self.weight1 = torch.nn.Parameter(torch.randn(512, 512, 512)).to('cuda') # bilinear
+        self.weight1 = torch.nn.Parameter(torch.randn(512, 512)).to('cuda')
+        self.weight2 = torch.nn.Parameter(torch.randn(512, 512)).to('cuda')
+        self.b = torch.nn.Parameter(torch.tensor([10.0, 1.0, 1.0, 1.0]))
 
-        self.bias1 = torch.nn.Parameter(torch.randn(512))
-        self.bias2 = torch.nn.Parameter(torch.randn(512))
+        self.bias1 = torch.nn.Parameter(torch.randn(512)).to('cuda')
+        self.bias2 = torch.nn.Parameter(torch.randn(512)).to('cuda')
         
     def forward(self, x):
-        x1 = self.image_features(x[0])
-        x2 = self.bert_features(x[1])
-        x3 = self.image_features(x[2])
-        y = torch.nn.functional.linear(x1, self.weight1, self.bias1) + \
-            torch.nn.functional.linear(x3, self.weight2, self.bias2)
-        concat_x = torch.cat([y, x2], 1)
-
+        # print(x[0].shape, x[1].shape, x[2].shape)
+        # concat_text = torch.cat([x[1], x[2]], 1)
+        x1 = self.image_features(x[0]) # pretrained
+        x2 = self.bert_features(x[2]) # bert
+        # x3 = self.bert_features(x[2]) # bert
+        # x3 = self.image_features(x[2]) # extra data
+        # y = self.b[0] * x[1]squeeze(1) + self.b[1] * x[2] lstm
+        # y = self.b[0] * x2 + self.b[1] * x3
+        # y = self.b[0] * x2 + self.b[1] * x3
+        # y = torch.sigmoid(x3) * x2
+        # y = self.bert_features(y)
+        # y = torch.nn.functional.bilinear(x1, x3, self.weight1, bias=self.bias1).to('cuda')
+        concat_x = torch.cat([x2, x1], 1)
+        
         return concat_x
     
 class ResidualModule(torch.nn.Module):
@@ -174,13 +192,13 @@ class ImgTextCompositionBase(torch.nn.Module):
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
-    def compute_loss_with_nouns(self,
+    def compute_loss_with_extra_data(self,
                                   imgs_query,
                                   modification_texts,
                                   imgs_target,
                                   nouns,
                                   soft_triplet_loss=True):
-        mod_img1 = self.compose_img_text_with_nouns(imgs_query, modification_texts, nouns)
+        mod_img1 = self.compose_img_text_with_extra_data(imgs_query, modification_texts, nouns)
         mod_img1 = self.normalization_layer(mod_img1)
         img2 = self.extract_img_feature(imgs_target)
         img2 = self.normalization_layer(img2)
@@ -368,38 +386,165 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         self.coord_extractor = torch.nn.Sequential(
             torch.nn.BatchNorm2d(3),
             CoordConv(3, 6), # conv inside
-            torch.nn.ReLU(inplace=True),
+            torch.nn.ReLU(),
             torch.nn.MaxPool2d(2, 2),
             torch.nn.Conv2d(6, 16, 5),
-            torch.nn.ReLU(inplace=True),
+            torch.nn.ReLU(),
             torch.nn.MaxPool2d(2, 2),
             torch.nn.Flatten(),
-            torch.nn.Linear(1664, 512)
+            torch.nn.Linear(1664, 1200),
+            torch.nn.ReLU(),
+            torch.nn.Linear(1200, 800),
+            torch.nn.ReLU(),
+            torch.nn.Linear(800, 512)
             
         )
         
     def extract_coord_info(self, imgs):
         return self.coord_extractor(imgs)
    
+    def extract_attention_info(self, texts, scene_embs):
+        attention = Attention(768)
+        output, weights = attention(texts, # query
+                                    scene_embs # context
+                                    )
+        
+        return output
+    
+    def get_wv_reprs(self, s):
+        v = np.zeros(300)
+        for w in re.split('\W+', s):
+            if w == 'to':
+                continue
+            if w == 'botm':
+                w = 'bottom'
+            try:
+                v += wv.get_vector(w)
+            except KeyError as e:
+                print(e)
+                print(s)
+        return v
+    
+    def get_w2v_for_lst(self, l):
+        embs = []
+        for i in l:
+            embs.append(self.get_wv_reprs(i))
+        return embs
+    
+    def apply_another_attention(self, scenes, queries, raw_feature_norm):
+        queries = np.array(self.get_w2v_for_lst(queries))
+        scenes = self.pad_descriptions(scenes)
+        scenes_summed = np.sum(scenes, axis=1)
+        queries_summed_scenes = queries + scenes_summed
+        
+        queries = torch.from_numpy(queries).float().unsqueeze(1).to('cuda') 
+        scenes_wv = torch.from_numpy(scenes).float().to('cuda')
+        queries_summed_scenes = torch.from_numpy(queries_summed_scenes).float().to('cuda')
+        
+        
+        weighted, attT = func_attention(queries, scenes_wv, raw_feature_norm)
+        
+        return weighted.squeeze(1), queries_summed_scenes
+    
+    def pad_descriptions(self, extra_data):
+        from itertools import chain
+        
+        # flatten extra_data
+        flattened = list(chain.from_iterable(extra_data))
+        try:
+            encodings = np.array(self.get_w2v_for_lst(flattened))
+            # encodings = bc.encode(flattened)
+            # encodings = self.extract_text_feature(flattened)
+        except ValueError as e:
+            print(e)
+            print(flattened)
+            print('got extra data as', extra_data)
+        lengths = [len(x) for x in extra_data]
+        max_len = max(lengths)
+        
+        # get intervals
+        intervals = []
+        start = 0
+        
+        for l in lengths:
+            interval = (start, start + l)
+            intervals.append(interval)
+            start += l
+        
+        # print(lengths, intervals, encodings.shape)
+        padded_encods = []
+        for i in intervals:
+            e = encodings[i[0]:i[1]]
+            current_len = e.shape[0]
+            padded_e = np.pad(e, ((0, max_len - current_len), (0, 0)), 'constant', constant_values=(0, )) # np
+            # padded_e = torch.nn.functional.pad(e, (0, 0, 0, max_len - current_len), 'constant', value=0)
+            padded_encods.append(padded_e)
+        
+        padded_encods = np.array(padded_encods) # hard coded
+#         for e in padded_encods:
+#             print(e.shape)
+        # b = torch.Tensor(32, max_len - current_len, 512)
+        # return torch.stack(padded_encods)
+        return padded_encods
+            
 
-    def compose_img_text_with_nouns(self, imgs, texts, captions):
+
+    def compose_img_text_with_extra_data(self, imgs, texts, extra_data):
         # for mitstates
 #         img_features = self.extract_img_feature(imgs)
 #         text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, nouns)])
 #         text_features = torch.from_numpy(text_features).cuda()
         # for fashion200k and css
-        img_features = self.extract_img_feature(imgs)
-        coord_img_features = self.extract_coord_info(imgs)
-        text_features = bc.encode(captions)
-        text_features = torch.from_numpy(text_features).cuda()
         
+        # attention prep: query encods
+        # text_features_original = bc.encode(texts)
+        # text_features_original = torch.from_numpy(text_features_original).to('cuda')
+        # text_features = self.extract_text_feature(texts).unsqueeze(1) # lstm
+        
+        wv_perturbed = []
+        wv_queries = []
+        for query, scene in zip(texts, extra_data):
+            scene_repr = ' '.join(scene)
+            if 'to' in re.split('\W+', query):
+                query = query.replace('to', '')
+            if 'botm' in re.split('\W+', query):
+                query = query.replace('botm', 'bottom')
+            try:
+                query = self.get_wv_reprs(query)
+            except KeyError as e:
+                print(e)
+                print(query)
+            wv_queries.append(query)
+            scene = self.get_wv_reprs(' '.join(scene))
+            query += scene
+            wv_perturbed.append(query)
+            
+#         wv_perturbed = torch.from_numpy(np.array(wv_perturbed)).float().to('cuda')
+        wv_queries = torch.from_numpy(np.array(wv_queries)).float().to('cuda')
 
-        return self.compose_img_text_features(img_features, text_features, coord_img_features)
+        weighted, queries_summed_scenes = self.apply_another_attention(extra_data, 
+                                                                       texts, 
+                                                                       "clipped_l2norm")
+        
+        # text_features = torch.from_numpy(text_features).to('cuda')
+        # scene_desc = self.pad_descriptions(extra_data)
+        # scene_desc = np.sum(scene_desc, axis=1)
+        # scene_desc = torch.from_numpy(scene_desc).to('cuda')
+        # text_features = text_features_original.unsqueeze(1).repeat(1, scene_desc.shape[1], 1).to('cuda')
+        
+        # print(text_features.shape, scene_desc.shape)
+        # attention_features = self.extract_attention_info(text_features, scene_desc).squeeze(1)
+        # attention_features = torch.sum(attention_features, axis=1)
+        # img
+        img_features = self.extract_img_feature(imgs)
+        # coord_img_features = self.extract_coord_info(imgs)
 
-    def compose_img_text_features(self, img_features, text_features, coord_img_features):
+        return self.compose_img_text_features(img_features, wv_queries, queries_summed_scenes)
 
-        f1 = self.gated_feature_composer((img_features, text_features, coord_img_features))
-        f2 = self.res_info_composer((img_features, text_features, coord_img_features))
+    def compose_img_text_features(self, img_features, text_features, extra_data):
+
+        f1 = self.gated_feature_composer((img_features, text_features, extra_data))
+        f2 = self.res_info_composer((img_features, text_features, extra_data))
         
         f = torch.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         return f
@@ -517,7 +662,7 @@ class TIRGLastConvEvolved(ImgEncoderTextEncoderBase):
         )
         
 
-    def compose_img_text_with_nouns(self, imgs, texts, nouns): #excessive
+    def compose_img_text_with_extra_data(self, imgs, texts, nouns): #excessive
         text_features = bc.encode(texts)
         text_features = torch.from_numpy(text_features).cuda()
         
@@ -604,3 +749,167 @@ class CoordConv(nn.Module):
         ret = self.addcoords(x)
         ret = self.conv(ret)
         return ret
+    
+    
+class Attention(torch.nn.Module):
+    """ Applies attention mechanism on the `context` using the `query`.
+
+    **Thank you** to IBM for their initial implementation of :class:`Attention`. Here is
+    their `License
+    <https://github.com/IBM/pytorch-seq2seq/blob/master/LICENSE>`__.
+
+    Args:
+        dimensions (int): Dimensionality of the query and context.
+        attention_type (str, optional): How to compute the attention score:
+
+            * dot: :math:`score(H_j,q) = H_j^T q`
+            * general: :math:`score(H_j, q) = H_j^T W_a q`
+
+    Example:
+
+         >>> attention = Attention(256)
+         >>> query = torch.randn(5, 1, 256)
+         >>> context = torch.randn(5, 5, 256)
+         >>> output, weights = attention(query, context)
+         >>> output.size()
+         torch.Size([5, 1, 256])
+         >>> weights.size()
+         torch.Size([5, 1, 5])
+    """
+
+    def __init__(self, dimensions, attention_type='general'):
+        super(Attention, self).__init__()
+
+        if attention_type not in ['dot', 'general']:
+            raise ValueError('Invalid attention type selected.')
+
+        self.attention_type = attention_type
+        if self.attention_type == 'general':
+            self.linear_in = torch.nn.Linear(dimensions, dimensions, bias=False).to('cuda')
+
+        self.linear_out = torch.nn.Linear(dimensions * 2, dimensions, bias=False).to('cuda')
+
+    def forward(self, query, context):
+        """
+        Args:
+            query (:class:`torch.FloatTensor` [batch size, output length, dimensions]): Sequence of
+                queries to query the context.
+            context (:class:`torch.FloatTensor` [batch size, query length, dimensions]): Data
+                overwhich to apply the attention mechanism.
+
+        Returns:
+            :class:`tuple` with `output` and `weights`:
+            * **output** (:class:`torch.LongTensor` [batch size, output length, dimensions]):
+              Tensor containing the attended features.
+            * **weights** (:class:`torch.FloatTensor` [batch size, output length, query length]):
+              Tensor containing attention weights.
+        """
+        batch_size, output_len, dimensions = query.size()
+        query_len = context.size(1)
+
+        if self.attention_type == "general":
+            query = query.reshape(batch_size * output_len, dimensions)
+            query = self.linear_in(query)
+            query = query.reshape(batch_size, output_len, dimensions)
+
+        # TODO: Include mask on PADDING_INDEX?
+
+        # (batch_size, output_len, dimensions) * (batch_size, query_len, dimensions) ->
+        # (batch_size, output_len, query_len)
+        attention_scores = torch.bmm(query, context.transpose(1, 2).contiguous())
+
+        # Compute weights across every context sequence
+        attention_scores = attention_scores.view(batch_size * output_len, query_len)
+        attention_weights = torch.nn.functional.softmax(attention_scores, dim=-1)
+        attention_weights = attention_weights.view(batch_size, output_len, query_len)
+
+        # (batch_size, output_len, query_len) * (batch_size, query_len, dimensions) ->
+        # (batch_size, output_len, dimensions)
+        mix = torch.bmm(attention_weights, context)
+
+        # concat -> (batch_size * output_len, 2*dimensions)
+        combined = torch.cat((mix, query), dim=2)
+        combined = combined.view(batch_size * output_len, 2 * dimensions)
+
+        # Apply linear_out on every 2nd dimension of concat
+        # output -> (batch_size, output_len, dimensions)
+        output = self.linear_out(combined).view(batch_size, output_len, dimensions)
+        output = torch.tanh(output)
+
+        return output, attention_weights
+
+
+
+def func_attention(query, context, raw_feature_norm, smooth=9., eps=1e-8):
+    """
+    query: (n_context, queryL, d)
+    context: (n_context, sourceL, d)
+    """
+    batch_size_q, queryL = query.size(0), query.size(1)
+    batch_size, sourceL = context.size(0), context.size(1)
+
+
+    # Get attention
+    # --> (batch, d, queryL)
+    queryT = torch.transpose(query, 1, 2)
+
+    # (batch, sourceL, d)(batch, d, queryL)
+    # --> (batch, sourceL, queryL)
+    attn = torch.bmm(context, queryT)
+    if raw_feature_norm == "softmax":
+        # --> (batch*sourceL, queryL)
+        attn = attn.view(batch_size*sourceL, queryL)
+        attn = torch.nn.functional.softmax(attn)
+        # --> (batch, sourceL, queryL)
+        attn = attn.view(batch_size, sourceL, queryL)
+    elif raw_feature_norm == "l2norm":
+        attn = l2norm(attn, 2)
+    elif raw_feature_norm == "clipped_l2norm":
+        attn = torch.nn.functional.leaky_relu(attn, 0.1)
+        attn = l2norm(attn, 2)
+    elif raw_feature_norm == "l1norm":
+        attn = l1norm_d(attn, 2)
+    elif raw_feature_norm == "clipped_l1norm":
+        attn = torch.nn.functional.leaky_relu(attn, 0.1)
+        attn = l1norm_d(attn, 2)
+    elif raw_feature_norm == "clipped":
+        attn = torch.nn.functional.leaky_relu(attn, 0.1)
+    elif raw_feature_norm == "no_norm":
+        pass
+    else:
+        raise ValueError("unknown first norm type:", opt.raw_feature_norm)
+    # --> (batch, queryL, sourceL)
+    attn = torch.transpose(attn, 1, 2).contiguous()
+    # --> (batch*queryL, sourceL)
+    attn = attn.view(batch_size*queryL, sourceL)
+    attn = torch.nn.functional.softmax(attn*smooth)
+    # --> (batch, queryL, sourceL)
+    attn = attn.view(batch_size, queryL, sourceL)
+    # --> (batch, sourceL, queryL)
+    attnT = torch.transpose(attn, 1, 2).contiguous()
+
+    # --> (batch, d, sourceL)
+    contextT = torch.transpose(context, 1, 2)
+    # (batch x d x sourceL)(batch x sourceL x queryL)
+    # --> (batch, d, queryL)
+    weightedContext = torch.bmm(contextT, attnT)
+    # --> (batch, queryL, d)
+    weightedContext = torch.transpose(weightedContext, 1, 2)
+
+    return weightedContext, attnT
+
+
+def l1norm(X, dim, eps=1e-8):
+    """L1-normalize columns of X
+    """
+    norm = torch.abs(X).sum(dim=dim, keepdim=True) + eps
+    X = torch.div(X, norm)
+    return X
+
+
+def l2norm(X, dim, eps=1e-8):
+    """L2-normalize columns of X
+    """
+    norm = torch.pow(X, 2).sum(dim=dim, keepdim=True).sqrt() + eps
+    X = torch.div(X, norm)
+    return X
