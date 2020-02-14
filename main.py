@@ -121,6 +121,14 @@ def load_dataset(opt):
             torchvision.transforms.Normalize([0.485, 0.456, 0.406],
                                              [0.229, 0.224, 0.225])
         ]))
+    
+  elif opt.dataset == 'mitstates_regions':
+    trainset = datasets.MITStatesRegions(
+        path=opt.dataset_path, # '../regions_info_data.txt'
+        split='train')
+    testset = datasets.MITStatesRegions(
+        path=opt.dataset_path,
+        split='test')
   else:
     print 'Invalid dataset', opt.dataset
     sys.exit()
@@ -148,6 +156,10 @@ def create_model_and_optimizer(opt, texts):
         texts, embed_dim=opt.embed_dim)
   elif opt.model == 'tirg_evolved':
     model = img_text_composition_models.TIRGEvolved(texts, embed_dim=opt.embed_dim)
+    if opt.pretrained_on_regions:
+        checkpoint = torch.load(opt.model_checkpoint)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.train()
   elif opt.model == 'tirg_lastconv_evolved':
     model = img_text_composition_models.TIRGLastConvEvolved(texts, embed_dim=opt.embed_dim)
   else:
@@ -235,7 +247,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
       img1 = np.stack([d['source_img_data'] for d in data])
       img1 = torch.from_numpy(img1).float()
       img1 = torch.autograd.Variable(img1).cuda()
-      if opt.dataset == 'mitstates' and opt.model == 'tirg_evolved':
+      if opt.dataset in ['mitstates', 'mitstates_regions'] and opt.model == 'tirg_evolved':
           extra_data = [str(d['noun']) for d in data]
       elif opt.dataset == 'fashion200k' and opt.model == 'tirg_evolved':
           extra_data = [str(d['target_caption']) for d in data]

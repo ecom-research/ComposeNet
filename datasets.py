@@ -531,3 +531,135 @@ class MITStates(BaseDataset):
     if self.transform:
       img = self.transform(img)
     return img
+
+
+class MITStatesRegions(BaseDataset):
+  """MITStates dataset."""
+
+  def __init__(self, path, split='train', transform=None):
+    super(MITStatesRegions, self).__init__()
+    self.path = path
+    self.transform = transform
+    self.split = split
+    import json
+    with open(path) as f:
+        filtered_chosen_items = json.load(f)
+    
+    self.regions_data = np.load('../data/regions_5_features/train_ims.npy', mmap_mode='r')
+    self.imgs = []
+
+    from os import listdir
+    for k, v in filtered_chosen_items.items():
+      if v['noun_only']:
+        continue
+      adj, noun = v['adj'], v['noun']
+      if adj is None:
+        continue
+      for region_feature in v['im_reg_ixs']:
+          self.imgs += [{
+                'captions': [k],
+                'adj': adj,
+                'noun': noun,
+                'image_id': region_feature['image_id'],
+                'region_id': region_feature['region_id']
+            }]
+
+
+    self.caption_index_init_()
+    if split == 'test':
+      self.generate_test_queries_()
+
+  def get_all_texts(self):
+    texts = []
+    for img in self.imgs:
+      texts += img['captions']
+    return texts
+
+  def __getitem__(self, idx):
+    try:
+      self.saved_item
+    except:
+      self.saved_item = None
+    if self.saved_item is None:
+      while True:
+        idx, target_idx1 = self.caption_index_sample_(idx)
+        idx, target_idx2 = self.caption_index_sample_(idx)
+        if self.imgs[target_idx1]['adj'] != self.imgs[target_idx2]['adj']:
+          break
+      idx, target_idx = [idx, target_idx1]
+      self.saved_item = [idx, target_idx2]
+    else:
+      idx, target_idx = self.saved_item
+      self.saved_item = None
+
+    mod_str = self.imgs[target_idx]['adj']
+
+    return {
+        'source_img_id': idx,
+        'source_img_data': self.get_img(idx),
+        'noun' : self.imgs[idx]['noun'],
+        'source_caption': self.imgs[idx]['captions'][0],
+        'target_img_id': target_idx,
+        'target_img_data': self.get_img(target_idx),
+        'target_caption': self.imgs[target_idx]['captions'][0],
+        'mod': {
+            'str': mod_str
+        }
+    }
+
+  def caption_index_init_(self):
+    self.caption2imgids = {}
+    self.noun2adjs = {}
+    for i, img in enumerate(self.imgs):
+      cap = img['captions'][0]
+      adj = img['adj']
+      noun = img['noun']
+      if cap not in self.caption2imgids.keys():
+        self.caption2imgids[cap] = []
+      if noun not in self.noun2adjs.keys():
+        self.noun2adjs[noun] = []
+      self.caption2imgids[cap].append(i)
+      if adj not in self.noun2adjs[noun]:
+        self.noun2adjs[noun].append(adj)
+    for noun, adjs in self.noun2adjs.iteritems():
+      try:
+          assert len(adjs) >= 2
+      except AssertionError as e:
+        print(adjs, noun)
+
+  def caption_index_sample_(self, idx):
+    noun = self.imgs[idx]['noun']
+    # adj = self.imgs[idx]['adj']
+    target_adj = random.choice(self.noun2adjs[noun])
+    target_caption = target_adj + ' ' + noun
+    target_idx = random.choice(self.caption2imgids[target_caption])
+    return idx, target_idx
+
+  def generate_test_queries_(self):
+    self.test_queries = []
+    for idx, img in enumerate(self.imgs):
+      adj = img['adj']
+      noun = img['noun']
+      for target_adj in self.noun2adjs[noun]:
+        if target_adj != adj:
+          mod_str = target_adj
+          self.test_queries += [{
+              'source_img_id': idx,
+              'source_caption': adj + ' ' + noun,
+              'noun' : self.imgs[idx]['noun'],
+              'target_caption': target_adj + ' ' + noun,
+              'mod': {
+                  'str': mod_str
+              }
+          }]
+    print len(self.test_queries), 'test queries'
+
+  def __len__(self):
+    return len(self.imgs)
+
+  def get_img(self, idx):
+    image_id = self.imgs[idx]['image_id'] - 1
+    region_id = self.imgs[idx]['region_id']
+    
+    return self.regions_data[image_id][region_id]
+

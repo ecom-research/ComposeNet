@@ -46,6 +46,31 @@ class ConCatModule(torch.nn.Module):
 
         return x
     
+class ConcatWithLinearModule(torch.nn.Module):
+
+    def __init__(self):
+        super(ConcatWithLinearModule, self).__init__()
+        self.bert_features = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(768),
+            torch.nn.Linear(768, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512)
+        )
+        self.image_features = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(512),
+            torch.nn.Linear(512, 512),
+            torch.nn.Dropout(p=0.5),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512)
+        )
+
+    def forward(self, x):
+        x1 = self.image_features(x[0])
+        x2 = self.bert_features(x[1])
+        concat_x = torch.cat([x1, x2], 1)
+
+        return concat_x
+    
 
 class ImgTextCompositionBase(torch.nn.Module):
     """Base class for image + text composition."""
@@ -55,6 +80,11 @@ class ImgTextCompositionBase(torch.nn.Module):
         self.normalization_layer = torch_functions.NormalizationLayer(
             normalize_scale=4.0, learn_scale=True)
         self.soft_triplet_loss = torch_functions.TripletLoss()
+#         self.img_enc = EncoderImage(2048, 512,
+#                                     precomp_enc_type='basic',
+#                                     no_imgnorm=True)
+#         if torch.cuda.is_available():
+#             self.img_enc.cuda()
 
     def extract_img_feature(self, imgs):
         raise NotImplementedError
@@ -89,8 +119,12 @@ class ImgTextCompositionBase(torch.nn.Module):
                                   soft_triplet_loss=True):
         mod_img1 = self.compose_img_text_with_extra_data(imgs_query, modification_texts, nouns)
         mod_img1 = self.normalization_layer(mod_img1)
-        img2 = self.extract_img_feature(imgs_target)
+        if imgs_target.shape[1] == 2048: # when using regions only
+            img2 = self.img_enc(imgs_target)
+        else:
+            img2 = self.img_enc(self.extract_img_feature(imgs_target))
         img2 = self.normalization_layer(img2)
+        # print(img2.shape, mod_img1.shape)
         assert (mod_img1.shape[0] == img2.shape[0] and
                 mod_img1.shape[1] == img2.shape[1])
         if soft_triplet_loss:
@@ -123,11 +157,20 @@ class ImgTextCompositionBase(torch.nn.Module):
 class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
     """Base class for image and text encoder."""
 
-    def __init__(self, texts, embed_dim):
+    def __init__(self, texts, embed_dim, learn_on_regions, use_pretrained):
         super(ImgEncoderTextEncoderBase, self).__init__()
 
         # img model
         img_model = torchvision.models.resnet18(pretrained=True)
+        self.learn_on_regions = learn_on_regions
+        self.use_pretrained = use_pretrained
+        
+#         class Identity(torch.nn.Module):
+#             def __init__(self):
+#                 super(Identity, self).__init__()
+
+#             def forward(self, x):
+#                 return x
 
         class GlobalAvgPool2d(torch.nn.Module):
 
@@ -135,7 +178,10 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
                 return F.adaptive_avg_pool2d(x, (1, 1))
 
         img_model.avgpool = GlobalAvgPool2d() # change shape?
-        img_model.fc = torch.nn.Sequential(torch.nn.Linear(512, embed_dim))
+#         img_model.fc = Identity()
+#         for param in img_model.parameters():
+#             param.requires_grad = False
+
         self.img_model = img_model
 
         # text model
@@ -145,7 +191,17 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
             lstm_hidden_dim=embed_dim)
 
     def extract_img_feature(self, imgs):
-        return self.img_model(imgs)
+        if self.learn_on_regions:
+            # overwrite img_model
+            self.img_model = EncoderImage(2048, 512, precomp_enc_type='basic', no_imgnorm=True)
+            return self.img_model(imgs)
+        elif not self.use_pretrained:
+            self.img_model.fc = torch.nn.Sequential(torch.nn.Linear(512, 2048),
+                                                    # torch.nn.Dropout(p=0.5),
+                                                    EncoderImage(2048, 512, 
+                                                                 precomp_enc_type='basic', 
+                                                                 no_imgnorm=True))
+            
 
     def extract_text_feature(self, texts):
         return self.text_model(texts)
@@ -252,54 +308,20 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.gated_feature_composer = torch.nn.Sequential(
-            ConCatModule(),
+            ConcatWithLinearModule(),
             torch.nn.BatchNorm1d(512 + 512),
             torch.nn.ReLU(),
             torch.nn.Linear(512 + 512, embed_dim)
         )
         self.res_info_composer = torch.nn.Sequential(
-            ConCatModule(), 
+            ConcatWithLinearModule(), 
             torch.nn.BatchNorm1d(512 + 512), 
             torch.nn.ReLU(),
             torch.nn.Linear(512 + 512, 512 + 512), 
             torch.nn.ReLU(),
             torch.nn.Linear(512 + 512, embed_dim)
         )
-        
-        self.coord_extractor = torch.nn.Sequential(
-            torch.nn.BatchNorm2d(3),
-            CoordConv(3, 6), # conv inside
-            torch.nn.ReLU(),
-            torch.nn.MaxPool2d(2, 2),
-            torch.nn.Conv2d(6, 16, 5),
-            torch.nn.ReLU(),
-            torch.nn.MaxPool2d(2, 2),
-            torch.nn.Flatten(),
-            torch.nn.Linear(1664, 1200),
-            torch.nn.ReLU(),
-            torch.nn.Linear(1200, 800),
-            torch.nn.ReLU(),
-            torch.nn.Linear(800, 512)
-            
-        )
-        
-        self.bert_features_processing = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(768),
-            torch.nn.Dropout(p=0.3),
-            # torch.nn.ReLU(),
-            torch.nn.Linear(768, 512),
-            # torch.nn.Dropout(p=0.5),
-            # torch.nn.ReLU(),
-            # torch.nn.Linear(512, 512)
-        )
-        self.image_features_processing = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(512),
-            # torch.nn.ReLU(),
-            # torch.nn.Linear(512, 512),
-            # torch.nn.Dropout(p=0.5),
-            # torch.nn.ReLU(),
-            # torch.nn.Linear(512, 512)
-        )
+
         
     def extract_coord_info(self, imgs):
         return self.coord_extractor(imgs)
@@ -386,28 +408,22 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
 
 
     def compose_img_text_with_extra_data(self, imgs, texts, extra_data):
-        # texts
-        # text_features_original = bc.encode(texts)
-        # text_features_processed = torch.from_numpy(text_features_original).to('cuda')
-        # text_features_wv = self.get_w2v_for_lst(texts)
-        # text_features_processed = torch.from_numpy(np.array(text_features_wv)).float().to('cuda')
-        # text_features_processed = self.bert_features_processing(text_features_processed)
-        text_features_processed = self.extract_text_feature(texts)
-        # img
-        self.img_features = self.extract_img_feature(imgs)
-        # img_features_processed = self.image_features_processing(self.img_features)
-
+        # img1_regions = torch.from_numpy(imgs).cuda()
+        # print(imgs.shape, self.extract_img_feature(imgs).shape)
+        img_features = self.img_enc(self.extract_img_feature(imgs))
         
-        # coord_img_features = self.extract_coord_info(imgs)
+        # img_features = self.extract_img_feature(imgs)
+        text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, extra_data)])
+        text_features = torch.from_numpy(text_features).cuda()
 
-        return self.compose_img_text_features(self.img_features, text_features_processed)
+        return self.compose_img_text_features(img_features, text_features)
 
     def compose_img_text_features(self, img_features, text_features):
 
         f1 = self.gated_feature_composer((img_features, text_features))
         f2 = self.res_info_composer((img_features, text_features))
         
-        f = torch.sigmoid(f1) * self.img_features * self.a[0] + f2 * self.a[1]
+        f = torch.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         
         return f    
     
@@ -630,3 +646,96 @@ def l2norm(X, dim, eps=1e-8):
     norm = torch.pow(X, 2).sum(dim=dim, keepdim=True).sqrt() + eps
     X = torch.div(X, norm)
     return X
+
+def EncoderImage(img_dim, embed_size, precomp_enc_type='basic',
+                 no_imgnorm=False):
+    """A wrapper to image encoders. Chooses between an different encoders
+    that uses precomputed image features.
+    """
+    if precomp_enc_type == 'basic':
+        img_enc = EncoderImagePrecomp(
+            img_dim, embed_size, no_imgnorm)
+    elif precomp_enc_type == 'weight_norm':
+        img_enc = EncoderImageWeightNormPrecomp(
+            img_dim, embed_size, no_imgnorm)
+    else:
+        raise ValueError("Unknown precomp_enc_type: {}".format(precomp_enc_type))
+
+    return img_enc
+
+
+class EncoderImagePrecomp(nn.Module):
+
+    def __init__(self, img_dim, embed_size, no_imgnorm=False):
+        super(EncoderImagePrecomp, self).__init__()
+        self.embed_size = embed_size
+        self.no_imgnorm = no_imgnorm
+        self.fc = nn.Linear(img_dim, embed_size)
+
+        self.init_weights()
+
+    def init_weights(self):
+        """Xavier initialization for the fully connected layer
+        """
+        r = np.sqrt(6.) / np.sqrt(self.fc.in_features +
+                                  self.fc.out_features)
+        self.fc.weight.data.uniform_(-r, r)
+        self.fc.bias.data.fill_(0)
+
+    def forward(self, images):
+        """Extract image feature vectors."""
+        # assuming that the precomputed features are already l2-normalized
+
+        features = self.fc(images)
+
+        # normalize in the joint embedding space
+        if not self.no_imgnorm:
+            features = l2norm(features, dim=-1)
+
+        return features
+
+    def load_state_dict(self, state_dict):
+        """Copies parameters. overwritting the default one to
+        accept state_dict from Full model
+        """
+        own_state = self.state_dict()
+        new_state = OrderedDict()
+        for name, param in state_dict.items():
+            if name in own_state:
+                new_state[name] = param
+
+        super(EncoderImagePrecomp, self).load_state_dict(new_state)
+
+
+
+class EncoderImageWeightNormPrecomp(nn.Module):
+
+    def __init__(self, img_dim, embed_size, no_imgnorm=False):
+        super(EncoderImageWeightNormPrecomp, self).__init__()
+        self.embed_size = embed_size
+        self.no_imgnorm = no_imgnorm
+        self.fc = weight_norm(nn.Linear(img_dim, embed_size), dim=None)
+
+    def forward(self, images):
+        """Extract image feature vectors."""
+        # assuming that the precomputed features are already l2-normalized
+
+        features = self.fc(images)
+
+        # normalize in the joint embedding space
+        if not self.no_imgnorm:
+            features = l2norm(features, dim=-1)
+
+        return features
+
+    def load_state_dict(self, state_dict):
+        """Copies parameters. overwritting the default one to
+        accept state_dict from Full model
+        """
+        own_state = self.state_dict()
+        new_state = OrderedDict()
+        for name, param in state_dict.items():
+            if name in own_state:
+                new_state[name] = param
+
+        super(EncoderImageWeightNormPrecomp, self).load_state_dict(new_state)

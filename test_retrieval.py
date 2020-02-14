@@ -16,6 +16,7 @@
 """Evaluates the retrieval model."""
 import numpy as np
 import torch
+import random
 from tqdm import tqdm as tqdm
 
 
@@ -24,13 +25,15 @@ def test(opt, model, testset):
   model.eval()
   test_queries = testset.get_test_queries()
   print('test_queries', len(test_queries))
-
+   
   all_imgs = []
   all_captions = []
   all_queries = []
   all_target_captions = []
   if test_queries:
-    
+    if opt.dataset == "mitstates_regions":
+        print('sampling 20000')
+        test_queries = random.sample(test_queries, 20000)
     # compute test query features
     imgs = []
     mods = []
@@ -75,11 +78,16 @@ def test(opt, model, testset):
     for i in tqdm(range(len(testset.imgs))):
       imgs += [testset.get_img(i)]
       if len(imgs) >= opt.batch_size or i == len(testset.imgs) - 1:
+        use_enc = False
         if 'torch' not in str(type(imgs[0])):
+          use_enc = True
           imgs = [torch.from_numpy(d).float() for d in imgs]
         imgs = torch.stack(imgs).float()
         imgs = torch.autograd.Variable(imgs).cuda()
-        imgs = model.extract_img_feature(imgs).data.cpu().numpy()
+        if use_enc:
+            imgs = model.img_enc(imgs).data.cpu().numpy()
+        else:
+            imgs = model.extract_img_feature(imgs.cuda()).data.cpu().numpy()
         all_imgs += [imgs]
         imgs = []
     all_imgs = np.concatenate(all_imgs)
@@ -96,10 +104,10 @@ def test(opt, model, testset):
       item = testset[i]
       imgs += [item['source_img_data']]
       if (opt.dataset == 'fashion200k'):
-        extra_data += [str(t['target_caption'])]
+        extra_data += [str(item['target_caption'])]
       elif (opt.dataset == 'css3d'):
         # extra_data += [t['mod']['str']]
-        objects = t['source_img_objects']
+        objects = item['source_img_objects']
         obj_data = []
         for obj in objects:
             if obj['shape']:
@@ -108,10 +116,13 @@ def test(opt, model, testset):
         # print('obj_data', obj_data)
         extra_data.append(obj_data)
       else:
-        extra_data += [str(t["noun"])]
+        extra_data += [str(item["noun"])]
       mods += [item['mod']['str']]
       if len(imgs) > opt.batch_size or i == 9999:
-        imgs = torch.stack(imgs).float() ## !!!
+        if type(imgs[0]).__module__ == 'numpy.core.memmap':
+            imgs = torch.from_numpy(np.array(imgs)).cuda()
+        else:
+            imgs = torch.stack(imgs).float() ## !!!
         imgs = torch.autograd.Variable(imgs)
         mods = [t.decode('utf-8') for t in mods]
         # nouns = [t.decode('utf-8') for t in nouns]
@@ -125,9 +136,17 @@ def test(opt, model, testset):
         mods = []
       imgs0 += [item['target_img_data']]
       if len(imgs0) > opt.batch_size or i == 9999:
-        imgs0 = torch.stack(imgs0).float()
+        use_enc = False
+        if type(imgs0[0]).__module__ == 'numpy.core.memmap':
+            imgs0 = torch.from_numpy(np.array(imgs0)).cuda()
+            use_enc = True
+        else:
+            imgs0 = torch.stack(imgs0).float()
         imgs0 = torch.autograd.Variable(imgs0)
-        imgs0 = model.extract_img_feature(imgs0.cuda()).data.cpu().numpy()
+        if use_enc:
+            imgs0 = model.img_enc(imgs0).data.cpu().numpy()
+        else:
+            imgs0 = model.extract_img_feature(imgs0.cuda()).data.cpu().numpy()
         all_imgs += [imgs0]
         imgs0 = []
       all_captions += [item['target_caption']]
