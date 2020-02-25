@@ -30,6 +30,7 @@ import torch
 import torch.utils.data
 import torchvision
 from tqdm import tqdm as tqdm
+from copy import deepcopy
 
 torch.set_num_threads(3)
 
@@ -55,9 +56,31 @@ def parse_opt():
   parser.add_argument('--log_dir', type=str, default='../logs/')
   parser.add_argument('--test_only', type=bool, default=False)
   parser.add_argument('--model_checkpoint', type=str, default='')
+  parser.add_argument('--learn_on_regions', type=bool, default=False)
+  parser.add_argument('--use_pretrained', type=bool, default=False)
   args = parser.parse_args()
   return args
 
+
+def switch_weights(full_model, regions_model):
+    new_model = deepcopy(full_model)
+#     for regions_model_field, tirg_model_field in zip(regions_model['model_state_dict'].items(), 
+#                                                      full_model['model_state_dict'].items()):
+#         current_field = regions_model_field[0]
+#         if current_field in full_model['model_state_dict'].keys() and 'image_features' in current_field:
+#             new_model['model_state_dict'][current_field] = \
+#             regions_model['model_state_dict'][current_field]
+
+    new_model['model_state_dict']['img_model.fc.0.fc.weight'] = \
+    regions_model['model_state_dict']['img_model.1.fc.weight']
+    new_model['model_state_dict']['img_model.fc.0.fc.bias'] = \
+    regions_model['model_state_dict']['img_model.1.fc.bias']
+    
+#     new_model['model_state_dict']['a'] = \
+#     regions_model['model_state_dict']['a']
+
+    
+    return new_model
 
 def load_dataset(opt):
   """Loads the input datasets."""
@@ -121,6 +144,27 @@ def load_dataset(opt):
             torchvision.transforms.Normalize([0.485, 0.456, 0.406],
                                              [0.229, 0.224, 0.225])
         ]))
+  elif opt.dataset == 'mitstates_AND_regions':
+    trainset = datasets.MITStatesANDRegions(
+        path=opt.dataset_path,
+        split='train',
+        transform=torchvision.transforms.Compose([
+            torchvision.transforms.Resize(224),
+            torchvision.transforms.CenterCrop(224),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize([0.485, 0.456, 0.406],
+                                             [0.229, 0.224, 0.225])
+        ]))
+    testset = datasets.MITStatesANDRegions(
+        path=opt.dataset_path,
+        split='test',
+        transform=torchvision.transforms.Compose([
+            torchvision.transforms.Resize(224),
+            torchvision.transforms.CenterCrop(224),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize([0.485, 0.456, 0.406],
+                                             [0.229, 0.224, 0.225])
+        ]))
     
   elif opt.dataset == 'mitstates_regions':
     trainset = datasets.MITStatesRegions(
@@ -143,25 +187,46 @@ def create_model_and_optimizer(opt, texts):
   print 'Creating model and optimizer for', opt.model
   if opt.model == 'imgonly':
     model = img_text_composition_models.SimpleModelImageOnly(
-        texts, embed_dim=opt.embed_dim)
+        texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
   elif opt.model == 'textonly':
     model = img_text_composition_models.SimpleModelTextOnly(
-        texts, embed_dim=opt.embed_dim)
+        texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
   elif opt.model == 'concat':
     model = img_text_composition_models.Concat(texts, embed_dim=opt.embed_dim)
   elif opt.model == 'tirg':
-    model = img_text_composition_models.TIRG(texts, embed_dim=opt.embed_dim)
+    model = img_text_composition_models.TIRG(
+        texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
+    if opt.use_pretrained:
+        # print("Using regions pretrained model from ", opt.model_checkpoint)
+        
+        regions_model_checkpoint = torch.load('../logs/mitstates/Feb22_21-33-49_ip-172-31-38-215mitstates_tirg_evolved_regions_05Drop/latest_checkpoint.pth')
+        full_model_checkpoint = torch.load('../logs/mitstates/Feb15_22-52-59_ip-172-31-38-215mitstates_tirg_original_text_model/latest_checkpoint.pth')
+        print("Switching weights...")
+        model_state = switch_weights(full_model_checkpoint, regions_model_checkpoint)
+        model.load_state_dict(model_state['model_state_dict'])
+        if not opt.test_only:
+            print("Preparing to continue training...")
+            model.train()
+            
   elif opt.model == 'tirg_lastconv':
     model = img_text_composition_models.TIRGLastConv(
-        texts, embed_dim=opt.embed_dim)
+        texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
   elif opt.model == 'tirg_evolved':
-    model = img_text_composition_models.TIRGEvolved(texts, embed_dim=opt.embed_dim)
-    if opt.pretrained_on_regions:
-        checkpoint = torch.load(opt.model_checkpoint)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.train()
+    model = img_text_composition_models.TIRGEvolved(
+        texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
+    if opt.use_pretrained:
+        regions_model_checkpoint = torch.load('../logs/mitstates/Feb22_21-33-49_ip-172-31-38-215mitstates_tirg_evolved_regions_05Drop/latest_checkpoint.pth')
+#         full_model_checkpoint = torch.load('../logs/mitstates/Feb17_16-47-38_ip-172-31-38-215mitstates_tirg_evolved_resnet101_freezed_untrained/latest_checkpoint.pth')
+        full_model_checkpoint = torch.load('../logs/mitstates/Feb24_12-33-05_ip-172-31-38-215mitstates_tirg_evolved_resnet_101_not_train/latest_checkpoint.pth')
+        print("Switching weights...")
+        model_state = switch_weights(full_model_checkpoint, regions_model_checkpoint)
+        model.load_state_dict(model_state['model_state_dict'])
+        if not opt.test_only:
+            print("Preparing to continue training...")
+            model.train()
   elif opt.model == 'tirg_lastconv_evolved':
-    model = img_text_composition_models.TIRGLastConvEvolved(texts, embed_dim=opt.embed_dim)
+    model = img_text_composition_models.TIRGLastConvEvolved(
+        texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
   else:
     print 'Invalid model', opt.model
     print 'available: imgonly, textonly, concat, tirg, tirg_lastconv or tirg_evolved'
@@ -171,16 +236,21 @@ def create_model_and_optimizer(opt, texts):
   # create optimizer
   params = []
   # low learning rate for pretrained layers on real image datasets
-  if opt.dataset != 'css3d':
-    params.append({
-        'params': [p for p in model.img_model.fc.parameters()],
-        'lr': opt.learning_rate
-    })
-    params.append({
-        'params': [p for p in model.img_model.parameters()],
-        'lr': 0.1 * opt.learning_rate
-    })
+#   if opt.dataset != 'css3d':
+#     params.append({
+#         'params': [p for p in model.img_model.fc.parameters()] + [p for p in model.img_model.fc.parameters()],
+#         'lr': opt.learning_rate
+#     })
+#     params.append({
+#         'params': [p for p in model.img_model.parameters()],
+#         # 'params': [p for p in filter(lambda p: p.requires_grad, model.img_model.parameters())],
+#         'lr': 0.1 * opt.learning_rate
+#     })
   params.append({'params': [p for p in model.parameters()]})
+  # params.append({'params': [p for p in filter(lambda p: p.requires_grad, model.parameters())]})
+  # print(params)
+  # print(len(params))
+  # return
   for _, p1 in enumerate(params):  # remove duplicated params
     for _, p2 in enumerate(params):
       if p1 is not p2:
@@ -189,11 +259,18 @@ def create_model_and_optimizer(opt, texts):
             if p11 is p22:
               p2['params'][j] = torch.tensor(0.0, requires_grad=True)
   optimizer = torch.optim.SGD(
-      params, lr=opt.learning_rate, momentum=0.9, weight_decay=opt.weight_decay)
-  return model, optimizer
+      params, lr=opt.learning_rate, 
+              momentum=0.9, 
+              weight_decay=opt.weight_decay
+  )
+  
+  scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=10, eta_min=1e-5)
+
+  return model, optimizer, scheduler
 
 
-def train_loop(opt, logger, trainset, testset, model, optimizer):
+def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
   """Function for train loop"""
   print 'Begin training'
   torch.backends.cudnn.benchmark = True
@@ -233,7 +310,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
         'model_state_dict': model.state_dict(),
     },
                logger.file_writer.get_logdir() + '/latest_checkpoint.pth')
-
+    # return
     # run trainning for 1 epoch
     model.train()
     trainloader = trainset.get_loader(
@@ -333,7 +410,12 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
     for data in tqdm(trainloader, desc='Training for epoch ' + str(epoch)):
       it += 1
       training_1_iter(data)
-
+      
+#       if it == 2700:
+#             for g in optimizer.param_groups:
+#               g['lr'] *= 0.1
+            
+      # scheduler.step()
       # decay learing rate
       if it >= opt.learning_rate_decay_frequency and it % opt.learning_rate_decay_frequency == 0:
         for g in optimizer.param_groups:
@@ -361,16 +443,41 @@ def main():
     logger.add_text(k, str(opt.__dict__[k]))
 
   trainset, testset = load_dataset(opt)
-  model, optimizer = create_model_and_optimizer(
-      opt, [t.decode('utf-8') for t in trainset.get_all_texts()])
+  # adding texts !!!
+  if opt.dataset == 'mitstates' and opt.model != 'tirg':
+      print("UGLY adding vocab of regions...")
+      opt.dataset = 'mitstates_regions'
+      opt.dataset_path = "../regions_info_data.txt"
+      trainset_regions, _ = load_dataset(opt)
+      all_texts = trainset_regions.get_all_texts() + trainset.get_all_texts()
+      opt.dataset = 'mitstates'
+      opt.dataset_path = "../data/release_dataset/"
+      model, optimizer, scheduler = create_model_and_optimizer(
+          opt, [t.decode('utf-8') for t in all_texts])
+    
+  elif opt.dataset == 'mitstates_regions' and opt.model != 'tirg':
+      print("UGLY adding vocab of mitstates...")
+      opt.dataset = 'mitstates'
+      opt.dataset_path = "../data/release_dataset/"
+      trainset_regions, _ = load_dataset(opt)
+      all_texts = trainset_regions.get_all_texts() + trainset.get_all_texts()
+      model, optimizer, scheduler = create_model_and_optimizer(
+          opt, [t.decode('utf-8') for t in all_texts])
+      opt.dataset = 'mitstates_regions'
+      opt.dataset_path = "../regions_info_data.txt"
+  else:
+      model, optimizer, scheduler = create_model_and_optimizer(
+          opt, [t.decode('utf-8') for t in trainset.get_all_texts()])
     
   if opt.test_only:
     print('Doing test only')
-    checkpoint = torch.load(opt.model_checkpoint)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    it = checkpoint['it']
+    if not opt.use_pretrained:
+        checkpoint = torch.load(opt.model_checkpoint)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        it = checkpoint['it']
     model.eval()
     tests = []
+    it = 0
     for name, dataset in [('train', trainset), ('test', testset)]:
       t = test_retrieval.test(opt, model, dataset)
       tests += [(name + ' ' + metric_name, metric_value)
@@ -380,7 +487,7 @@ def main():
       print '    ', metric_name, round(metric_value, 4)
     return
         
-  train_loop(opt, logger, trainset, testset, model, optimizer)
+  train_loop(opt, logger, trainset, testset, model, optimizer, scheduler)
   logger.close()
 
 

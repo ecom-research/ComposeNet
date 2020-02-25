@@ -78,16 +78,12 @@ def test(opt, model, testset):
     for i in tqdm(range(len(testset.imgs))):
       imgs += [testset.get_img(i)]
       if len(imgs) >= opt.batch_size or i == len(testset.imgs) - 1:
-        use_enc = False
         if 'torch' not in str(type(imgs[0])):
-          use_enc = True
           imgs = [torch.from_numpy(d).float() for d in imgs]
         imgs = torch.stack(imgs).float()
         imgs = torch.autograd.Variable(imgs).cuda()
-        if use_enc:
-            imgs = model.img_enc(imgs).data.cpu().numpy()
-        else:
-            imgs = model.extract_img_feature(imgs.cuda()).data.cpu().numpy()
+        imgs = model.extract_img_feature(imgs.cuda()).data.cpu().numpy()
+        
         all_imgs += [imgs]
         imgs = []
     all_imgs = np.concatenate(all_imgs)
@@ -136,17 +132,12 @@ def test(opt, model, testset):
         mods = []
       imgs0 += [item['target_img_data']]
       if len(imgs0) > opt.batch_size or i == 9999:
-        use_enc = False
         if type(imgs0[0]).__module__ == 'numpy.core.memmap':
             imgs0 = torch.from_numpy(np.array(imgs0)).cuda()
-            use_enc = True
         else:
             imgs0 = torch.stack(imgs0).float()
         imgs0 = torch.autograd.Variable(imgs0)
-        if use_enc:
-            imgs0 = model.img_enc(imgs0).data.cpu().numpy()
-        else:
-            imgs0 = model.extract_img_feature(imgs0.cuda()).data.cpu().numpy()
+        imgs0 = model.extract_img_feature(imgs0.cuda()).data.cpu().numpy()
         all_imgs += [imgs0]
         imgs0 = []
       all_captions += [item['target_caption']]

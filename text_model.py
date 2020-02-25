@@ -17,7 +17,6 @@
 import string
 import numpy as np
 import torch
-from gensim.models import KeyedVectors
 
 
 class SimpleVocab(object):
@@ -56,14 +55,6 @@ class SimpleVocab(object):
   def get_size(self):
     return len(self.word2id)
 
-  def load_w2v_embeddings(self, text):
-    tokens = self.tokenize_text(text)
-    embeddings = np.zeros((self.get_size(), 300))
-    for t in tokens:
-      index = self.word2id.get(t, 0)
-      embeddings[index] = self.wv[t]
-    return torch.from_numpy(embeddings).float()
-
 
 class TextLSTMModel(torch.nn.Module):
 
@@ -75,21 +66,13 @@ class TextLSTMModel(torch.nn.Module):
     super(TextLSTMModel, self).__init__()
 
     self.vocab = SimpleVocab()
-    # self.wv = KeyedVectors.load('wordvectors-300.kv', mmap='r')
     for text in texts_to_build_vocab:
       self.vocab.add_text_to_vocab(text)
     vocab_size = self.vocab.get_size()
-    # self.embeddings = self.vocab.load_w2v_embeddings(text)
-    # weights = torch.FloatTensor(self.wv.vectors)
 
     self.word_embed_dim = word_embed_dim
     self.lstm_hidden_dim = lstm_hidden_dim
     self.embedding_layer = torch.nn.Embedding(vocab_size, word_embed_dim)
-    # self.embedding_layer = torch.nn.Embedding.from_pretrained(weights)
-    # self.embedding_layer.trainable = False
-    # embedding = torch.nn.Embedding(self.wv.size(0), self.wv.size(1))
-    # embedding.weight = nn.Parameter(embeddings)
-    # self.fc = torch.nn.Linear(300, 512)
     self.lstm = torch.nn.LSTM(word_embed_dim, lstm_hidden_dim)
     self.fc_output = torch.nn.Sequential(
         torch.nn.Dropout(p=0.1),
@@ -117,7 +100,7 @@ class TextLSTMModel(torch.nn.Module):
     # embed words
     itexts = torch.autograd.Variable(itexts).cuda()
     etexts = self.embedding_layer(itexts)
-    # etexts = self.fc(etexts)
+
     # lstm
     lstm_output, _ = self.forward_lstm_(etexts)
 
