@@ -236,10 +236,26 @@ def create_model_and_optimizer(opt, texts):
   # create optimizer
   params = []
   # low learning rate for pretrained layers on real image datasets
-#   if opt.dataset != 'css3d':
+  if opt.dataset != 'css3d':
+    params.append({
+        'params': [p for p in model.img_model.fc.parameters()],
+        'lr': 0.5 * opt.learning_rate
+    })
+    params.append({
+        'params': [p for p in model.img_model.parameters()],
+        'lr': 0.1 * opt.learning_rate
+    })
+    
 #     params.append({
-#         'params': [p for p in model.img_model.fc.parameters()] + [p for p in model.img_model.fc.parameters()],
+#         'params': [x[1] for x in model.gated_feature_composer.named_parameters() if 'text' in x[0]] + \
+#                   [x[1] for x in model.res_info_composer.named_parameters() if 'text' in x[0]],
 #         'lr': opt.learning_rate
+#     })
+#     params.append({
+#         'params': [p for p in model.img_model.fc.parameters()]
+#                   [x[1] for x in model.gated_feature_composer.named_parameters() if 'image' in x[0]] + \
+#                   [x[1] for x in model.res_info_composer.named_parameters() if 'image' in x[0]],
+#         'lr': 0.5 * opt.learning_rate
 #     })
 #     params.append({
 #         'params': [p for p in model.img_model.parameters()],
