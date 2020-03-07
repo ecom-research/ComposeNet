@@ -21,6 +21,7 @@
 import argparse
 import sys
 import time
+import ast
 import datasets
 import img_text_composition_models
 import numpy as np
@@ -239,34 +240,13 @@ def create_model_and_optimizer(opt, texts):
   if opt.dataset != 'css3d':
     params.append({
         'params': [p for p in model.img_model.fc.parameters()],
-        'lr': 0.5 * opt.learning_rate
+        'lr': opt.learning_rate
     })
     params.append({
         'params': [p for p in model.img_model.parameters()],
         'lr': 0.1 * opt.learning_rate
     })
-    
-#     params.append({
-#         'params': [x[1] for x in model.gated_feature_composer.named_parameters() if 'text' in x[0]] + \
-#                   [x[1] for x in model.res_info_composer.named_parameters() if 'text' in x[0]],
-#         'lr': opt.learning_rate
-#     })
-#     params.append({
-#         'params': [p for p in model.img_model.fc.parameters()]
-#                   [x[1] for x in model.gated_feature_composer.named_parameters() if 'image' in x[0]] + \
-#                   [x[1] for x in model.res_info_composer.named_parameters() if 'image' in x[0]],
-#         'lr': 0.5 * opt.learning_rate
-#     })
-#     params.append({
-#         'params': [p for p in model.img_model.parameters()],
-#         # 'params': [p for p in filter(lambda p: p.requires_grad, model.img_model.parameters())],
-#         'lr': 0.1 * opt.learning_rate
-#     })
   params.append({'params': [p for p in model.parameters()]})
-  # params.append({'params': [p for p in filter(lambda p: p.requires_grad, model.parameters())]})
-  # print(params)
-  # print(len(params))
-  # return
   for _, p1 in enumerate(params):  # remove duplicated params
     for _, p2 in enumerate(params):
       if p1 is not p2:
@@ -341,7 +321,11 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       img1 = torch.from_numpy(img1).float()
       img1 = torch.autograd.Variable(img1).cuda()
       if opt.dataset in ['mitstates', 'mitstates_regions'] and opt.model == 'tirg_evolved':
-          extra_data = [str(d['noun']) for d in data]
+          classes_descr = [ast.literal_eval(d['context_classes']) for d in data]
+          target_classes_descr = [ast.literal_eval(d['target_context_classes']) for d in data]
+          nouns = [str(d['noun']) for d in data]
+          source_captions = [str(d['source_caption']) for d in data]
+          extra_data = [nouns, classes_descr, target_classes_descr, source_captions]
       elif opt.dataset == 'fashion200k' and opt.model == 'tirg_evolved':
           extra_data = [str(d['target_caption']) for d in data]
 

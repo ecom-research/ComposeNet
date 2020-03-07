@@ -15,6 +15,7 @@
 
 """Evaluates the retrieval model."""
 import numpy as np
+import ast
 import torch
 import random
 from tqdm import tqdm as tqdm
@@ -55,7 +56,13 @@ def test(opt, model, testset):
         # print('obj_data', obj_data)
         extra_data.append(obj_data)
       else:
-        extra_data += [str(t["noun"])]
+        if not extra_data:
+            extra_data = [[] for i in range(4)]
+        extra_data[0].append(str(t["noun"]))
+        extra_data[1].append(ast.literal_eval(t["context_classes"]))
+        extra_data[2].append(ast.literal_eval(t["context_classes"]))
+        extra_data[3].append(str(t["source_caption"]))
+        
       if len(imgs) >= opt.batch_size or t is test_queries[-1]:
         if 'torch' not in str(type(imgs[0])):
           imgs = [torch.from_numpy(d).float() for d in imgs]
@@ -63,7 +70,8 @@ def test(opt, model, testset):
         imgs = torch.autograd.Variable(imgs).cuda()
         mods = [t.decode('utf-8') for t in mods]
         if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
-            f = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data).data.cpu().numpy()
+            f, _, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
+            f = f.data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
         all_queries += [f]
@@ -112,7 +120,13 @@ def test(opt, model, testset):
         # print('obj_data', obj_data)
         extra_data.append(obj_data)
       else:
-        extra_data += [str(item["noun"])]
+        if not extra_data:
+            extra_data = [[] for i in range(4)]
+        extra_data[0].append(str(item["noun"]))
+        extra_data[1].append(ast.literal_eval(item["context_classes"]))
+        extra_data[2].append(ast.literal_eval(item["target_context_classes"]))
+        extra_data[3].append(str(item["source_caption"]))
+        
       mods += [item['mod']['str']]
       if len(imgs) > opt.batch_size or i == 9999:
         if type(imgs[0]).__module__ == 'numpy.core.memmap':
@@ -123,7 +137,8 @@ def test(opt, model, testset):
         mods = [t.decode('utf-8') for t in mods]
         # nouns = [t.decode('utf-8') for t in nouns]
         if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
-            f = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data).data.cpu().numpy()
+            f, _, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
+            f = f.data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
         all_queries += [f]

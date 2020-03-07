@@ -45,7 +45,22 @@ class ConCatModule(torch.nn.Module):
         x = torch.cat(x, 1)
 
         return x
+
+class TextModule(torch.nn.Module):
+
+    def __init__(self):
+        super(TextModule, self).__init__()
+        self.bert_features = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(768),
+            torch.nn.Linear(768, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512)
+        )
+        
+    def forward(self, x):
+        return self.bert_features(x)
     
+
 class ConcatWithLinearModule(torch.nn.Module):
 
     def __init__(self):
@@ -59,7 +74,7 @@ class ConcatWithLinearModule(torch.nn.Module):
         self.image_features = torch.nn.Sequential(
             torch.nn.BatchNorm1d(512),
             torch.nn.Linear(512, 512),
-            torch.nn.Dropout(p=0.5),
+            torch.nn.Dropout(p=0.7),
             torch.nn.ReLU(),
             torch.nn.Linear(512, 512)
         )
@@ -110,20 +125,23 @@ class ImgTextCompositionBase(torch.nn.Module):
                                   imgs_query,
                                   modification_texts,
                                   imgs_target,
-                                  nouns,
+                                  extra_data,
                                   soft_triplet_loss=True):
-        mod_img1 = self.compose_img_text_with_extra_data(imgs_query, modification_texts, nouns)
+        mod_img1, text_img1, text_img2 = self.compose_img_text_with_extra_data(imgs_query, 
+                                                                               modification_texts, 
+                                                                               extra_data)
         mod_img1 = self.normalization_layer(mod_img1)
+        
         img2 = self.extract_img_feature(imgs_target)
         img2 = self.normalization_layer(img2)
         assert (mod_img1.shape[0] == img2.shape[0] and
                 mod_img1.shape[1] == img2.shape[1])
         if soft_triplet_loss:
-            return self.compute_soft_triplet_loss_(mod_img1, img2)
+            return self.compute_soft_triplet_loss_(mod_img1, img2, text_img1, text_img2)
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
-    def compute_soft_triplet_loss_(self, mod_img1, img2):
+    def compute_soft_triplet_loss_(self, mod_img1, img2, text_img1, text_img2):
         triplets = []
         labels = range(mod_img1.shape[0]) + range(img2.shape[0])
         for i in range(len(labels)):
@@ -136,7 +154,8 @@ class ImgTextCompositionBase(torch.nn.Module):
             np.random.shuffle(triplets_i)
             triplets += triplets_i[:3]
         assert (triplets and len(triplets) < 2000)
-        return self.soft_triplet_loss(torch.cat([mod_img1, img2]), triplets)
+        
+        return self.soft_triplet_loss(torch.cat([mod_img1, img2]), torch.cat([text_img1, text_img2]), triplets)
 
     def compute_batch_based_classification_loss_(self, mod_img1, img2):
         x = torch.mm(mod_img1, img2.transpose(0, 1))
@@ -169,9 +188,9 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
             return
         
         # img model
-        img_model = torchvision.models.resnet101(pretrained=True)
-        for param in img_model.parameters():
-            param.requires_grad = False
+        img_model = torchvision.models.resnet18(pretrained=True)
+#         for param in img_model.parameters():
+#             param.requires_grad = False
         
         class GlobalAvgPool2d(torch.nn.Module):
 
@@ -179,12 +198,13 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
                 return F.adaptive_avg_pool2d(x, (1, 1))
 
         img_model.avgpool = GlobalAvgPool2d() # change shape?
-        img_model.fc = torch.nn.Sequential(# torch.nn.Linear(512, 2048),
-                                            # torch.nn.Dropout(p=0.2),
-                                            EncoderImage(2048, 
-                                            512,  
-                                            precomp_enc_type='basic',  
-                                            no_imgnorm=True)) 
+        img_model.fc = torch.nn.Sequential(torch.nn.Linear(512, embed_dim))
+#         img_model.fc = torch.nn.Sequential(# torch.nn.Linear(512, 2048),
+#                                             # torch.nn.Dropout(p=0.2),
+#                                             EncoderImage(2048, 
+#                                             512,  
+#                                             precomp_enc_type='basic',  
+#                                             no_imgnorm=True)) 
         self.img_model = img_model
 
     def extract_img_feature(self, imgs):
@@ -298,17 +318,29 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.gated_feature_composer = torch.nn.Sequential(
             ConcatWithLinearModule(),
-            torch.nn.BatchNorm1d(512 + 512),
+            torch.nn.BatchNorm1d(2 * embed_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(512 + 512, embed_dim)
+            torch.nn.Linear(2 * embed_dim, embed_dim)
         )
         self.res_info_composer = torch.nn.Sequential(
             ConcatWithLinearModule(), 
-            torch.nn.BatchNorm1d(512 + 512), 
+            torch.nn.BatchNorm1d(2 * embed_dim), 
             torch.nn.ReLU(),
-            torch.nn.Linear(512 + 512, 512 + 512), 
+            torch.nn.Linear(2 * embed_dim, 2 * embed_dim), 
             torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, embed_dim)
+        )
+        
+        self.res_info_composer_attended = torch.nn.Sequential(
+            ConcatWithLinearModule(),
             torch.nn.Linear(512 + 512, embed_dim)
+        )
+        
+        self.text_processing = torch.nn.Sequential(
+            TextModule(),
+            torch.nn.BatchNorm1d(embed_dim), 
+            torch.nn.ReLU(),
+            torch.nn.Linear(embed_dim, embed_dim), 
         )
 
         
@@ -397,24 +429,48 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
 
 
     def compose_img_text_with_extra_data(self, imgs, texts, extra_data):
-        # img1_regions = torch.from_numpy(imgs).cuda()
-        # print(imgs.shape, self.extract_img_feature(imgs).shape)
+        batch_size = imgs.shape[0]
         img_features = self.extract_img_feature(imgs)
-
-        # img_features = self.extract_img_feature(imgs)
-        text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, extra_data)])
-        text_features = torch.from_numpy(text_features).cuda()
+        
+        # region descriptions
+#         source_context_features = [' '.join(x.values()) for x in extra_data[1]]
+#         target_context_features = [' '.join(x.values()) for x in extra_data[2]]
+        
+        # adding nouns to mods
+        text_features = [adj + " " + noun for adj, noun in zip(texts, extra_data[0])]
+        
+        joined = text_features + extra_data[3]
+        joined = bc.encode(joined)
+        
+        text_features = torch.from_numpy(joined[:batch_size]).cuda()
+        source_text_features = torch.from_numpy(joined[batch_size:]).cuda()
+        
+        self.source_text_feats = source_text_features
+        self.target_text_feats = text_features
+        
+#         self.source_text_feats = self.text_processing(source_text_features)
+#         self.target_text_feats = self.text_processing(text_features)
+        
+#         joined = source_context_features + target_context_features + text_features
+#         joined = bc.encode(joined)
+        
+#         source_context_features = torch.from_numpy(joined[:batch_size]).cuda()
+#         target_context_features = torch.from_numpy(joined[batch_size:2*batch_size]).cuda()
+#         text_features = torch.from_numpy(joined[2*batch_size:]).cuda()
+        
+#         self.source_text_feats = self.text_processing(source_context_features)
+#         self.target_text_feats = self.text_processing(target_context_features)
 
         return self.compose_img_text_features(img_features, text_features)
 
     def compose_img_text_features(self, img_features, text_features):
-
         f1 = self.gated_feature_composer((img_features, text_features))
         f2 = self.res_info_composer((img_features, text_features))
+        # f3 = self.res_info_composer_attended((img_features, self.context_features))
         
-        f = torch.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
+        f = torch.sigmoid(f1) * img_features * self.a[0] + self.a[1] * f2
         
-        return f    
+        return f, self.source_text_feats, self.target_text_feats    
     
     
 '''

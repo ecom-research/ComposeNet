@@ -15,6 +15,7 @@
 
 """Provides data for training and testing."""
 import numpy as np
+import ast
 import PIL
 import skimage.io
 import torch
@@ -398,6 +399,10 @@ class MITStates(BaseDataset):
     self.path = path
     self.transform = transform
     self.split = split
+    import json
+
+    with open('../data/paths2classes_dct.json') as f:
+        self.paths2classes_dct = json.load(f)
 
     self.imgs = []
     test_nouns = [
@@ -426,7 +431,7 @@ class MITStates(BaseDataset):
       for file_path in listdir(path + '/images/' + f):
         assert (file_path.endswith('jpg'))
         self.imgs += [{
-            'file_path': path + '/images/' + f + '/' + file_path,
+            'file_path': path + 'images/' + f + '/' + file_path,
             'captions': [f],
             'adj': adj,
             'noun': noun
@@ -465,7 +470,10 @@ class MITStates(BaseDataset):
         'source_img_id': idx,
         'source_img_data': self.get_img(idx),
         'noun' : self.imgs[idx]['noun'],
+        'context_classes' : self.paths2classes_dct[self.imgs[idx]['file_path']],
         'source_caption': self.imgs[idx]['captions'][0],
+        
+        'target_context_classes' : self.paths2classes_dct[self.imgs[target_idx]['file_path']],
         'target_img_id': target_idx,
         'target_img_data': self.get_img(target_idx),
         'target_caption': self.imgs[target_idx]['captions'][0],
@@ -507,15 +515,20 @@ class MITStates(BaseDataset):
       for target_adj in self.noun2adjs[noun]:
         if target_adj != adj:
           mod_str = target_adj
-          self.test_queries += [{
-              'source_img_id': idx,
-              'source_caption': adj + ' ' + noun,
-              'noun' : self.imgs[idx]['noun'],
-              'target_caption': target_adj + ' ' + noun,
-              'mod': {
-                  'str': mod_str
-              }
-          }]
+          try:
+              self.test_queries += [{
+                  'source_img_id': idx,
+                  'source_caption': adj + ' ' + noun,
+                  'context_classes' : self.paths2classes_dct[self.imgs[idx]['file_path']],
+                  'noun' : self.imgs[idx]['noun'],
+                  'target_caption': target_adj + ' ' + noun,
+                  'mod': {
+                      'str': mod_str
+                  }
+              }]
+          except KeyError as e:
+            print('Wasnt found', self.imgs[idx]['file_path'])
+            
     print len(self.test_queries), 'test queries'
 
   def __len__(self):
