@@ -400,7 +400,8 @@ class MITStates(BaseDataset):
     self.transform = transform
     self.split = split
     import json
-
+    
+    
     with open('../data/paths2classes_dct.json') as f:
         self.paths2classes_dct = json.load(f)
 
@@ -527,7 +528,7 @@ class MITStates(BaseDataset):
                   }
               }]
           except KeyError as e:
-            print('Wasnt found', self.imgs[idx]['file_path'])
+            print('Wasnt found', self.imgs[idx]['file_path'], e)
             
     print len(self.test_queries), 'test queries'
 

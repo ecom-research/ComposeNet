@@ -22,6 +22,7 @@ import argparse
 import sys
 import time
 import ast
+import gc
 import datasets
 import img_text_composition_models
 import numpy as np
@@ -289,6 +290,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
 
     # test
     if epoch % 3 == 1:
+      gc.collect()
       torch.cuda.empty_cache()
       tests = []
       for name, dataset in [('train', trainset), ('test', testset)]:

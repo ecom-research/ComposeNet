@@ -52,9 +52,15 @@ def pairwise_distances(x, y=None):
   return torch.clamp(dist, 0.0, np.inf)
 
 
-def cos_distances(x):
+def cosine_distance_torch(x1, x2=None, eps=1e-8):
     
-    return F.cosine_similarity(x, y, dim=0)
+    x2 = x1 if x2 is None else x2
+    w1 = x1.norm(p=2, dim=1, keepdim=True)
+    w2 = w1 if x2 is x1 else x2.norm(p=2, dim=1, keepdim=True)
+    return 1 - torch.mm(x1, x2.t()) / (w1 * w2.t()).clamp(min=eps)
+
+def manhattan_distance_torch(x1):
+    return torch.clamp(torch.cdist(x1, x1, p=1), 0.0, np.inf)
 
 
 class MyTripletLossFunc(torch.autograd.Function):
@@ -66,9 +72,12 @@ class MyTripletLossFunc(torch.autograd.Function):
 
   def forward(self, image_features, text_features):
     self.save_for_backward(image_features, text_features)
-
+    
     self.distances_image = pairwise_distances(image_features).cpu().numpy()
     self.distances_text = pairwise_distances(text_features).cpu().numpy()
+
+#     self.distances_image = pairwise_distances(image_features).cpu().numpy()
+#     self.distances_text = pairwise_distances(text_features).cpu().numpy()
     
     # print(image_features.shape, text_features.shape, self.distances_image.shape, self.distances_text.shape)
 
@@ -128,6 +137,7 @@ class MyTripletLossFunc(torch.autograd.Function):
 
     for i in range(image_features_np.shape[0]):
       grad_image_features[i, :] = torch.from_numpy(grad_image_features_np[i, :])
+    for i in range(text_features_np.shape[0]):
       grad_text_features[i, :] = torch.from_numpy(grad_text_features_np[i, :])
     grad_image_features *= float(grad_image_output.data[0])
     grad_text_features *= float(grad_text_output.data[0])

@@ -17,6 +17,7 @@
 import string
 import numpy as np
 import torch
+from gensim.models import KeyedVectors
 
 
 class SimpleVocab(object):
@@ -55,6 +56,15 @@ class SimpleVocab(object):
   def get_size(self):
     return len(self.word2id)
 
+  def load_w2v_embeddings(self, wv):
+    embeddings = np.zeros((self.get_size(), 300))
+    for word, index in self.word2id.iteritems():
+        if word == '<UNK>':
+            word = 'UNK'
+        embeddings[index] = wv[word]
+        
+    return torch.from_numpy(embeddings).float()
+
 
 class TextLSTMModel(torch.nn.Module):
 
@@ -66,18 +76,26 @@ class TextLSTMModel(torch.nn.Module):
     super(TextLSTMModel, self).__init__()
 
     self.vocab = SimpleVocab()
-    for text in texts_to_build_vocab:
-      self.vocab.add_text_to_vocab(text)
-    vocab_size = self.vocab.get_size()
-
     self.word_embed_dim = word_embed_dim
     self.lstm_hidden_dim = lstm_hidden_dim
-    self.embedding_layer = torch.nn.Embedding(vocab_size, word_embed_dim)
-    self.lstm = torch.nn.LSTM(word_embed_dim, lstm_hidden_dim)
+    wv = KeyedVectors.load('../tirg-with-scan/wordvectors-300.kv', mmap='r')
+    for text in texts_to_build_vocab:
+      self.vocab.add_text_to_vocab(text)
+    
+    vocab_size = self.vocab.get_size()
+    
+    embeddings = self.vocab.load_w2v_embeddings(wv)
+    
+    self.embedding_layer = torch.nn.Embedding.from_pretrained(embeddings).cuda()
+    self.embedding_layer.trainable = False
+    
+    self.fc = torch.nn.Linear(300, 512).cuda()
+    
+    self.lstm = torch.nn.LSTM(word_embed_dim, lstm_hidden_dim).cuda()
     self.fc_output = torch.nn.Sequential(
         torch.nn.Dropout(p=0.1),
         torch.nn.Linear(lstm_hidden_dim, lstm_hidden_dim),
-    )
+    ).cuda()
 
   def forward(self, x):
     """ input x: list of strings"""
@@ -100,7 +118,7 @@ class TextLSTMModel(torch.nn.Module):
     # embed words
     itexts = torch.autograd.Variable(itexts).cuda()
     etexts = self.embedding_layer(itexts)
-
+    etexts = self.fc(etexts)
     # lstm
     lstm_output, _ = self.forward_lstm_(etexts)
 
@@ -118,6 +136,8 @@ class TextLSTMModel(torch.nn.Module):
     batch_size = etexts.shape[1]
     first_hidden = (torch.zeros(1, batch_size, self.lstm_hidden_dim),
                     torch.zeros(1, batch_size, self.lstm_hidden_dim))
+    
     first_hidden = (first_hidden[0].cuda(), first_hidden[1].cuda())
     lstm_output, last_hidden = self.lstm(etexts, first_hidden)
+    
     return lstm_output, last_hidden
