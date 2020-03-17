@@ -61,7 +61,11 @@ class SimpleVocab(object):
     for word, index in self.word2id.iteritems():
         if word == '<UNK>':
             word = 'UNK'
-        embeddings[index] = wv[word]
+        try:
+            embeddings[index] = wv[word]
+        except KeyError as e:
+            print(e)
+            embeddings[index] = wv['UNK']
         
     return torch.from_numpy(embeddings).float()
 

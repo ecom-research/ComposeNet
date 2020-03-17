@@ -329,7 +329,8 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
           source_captions = [str(d['source_caption']) for d in data]
           extra_data = [nouns, classes_descr, target_classes_descr, source_captions]
       elif opt.dataset == 'fashion200k' and opt.model == 'tirg_evolved':
-          extra_data = [str(d['target_caption']) for d in data]
+          target_caption = [str(d['target_caption']) for d in data]
+          extra_data = [target_caption]
 
       img2 = np.stack([d['target_img_data'] for d in data])
       img2 = torch.from_numpy(img2).float()
@@ -339,13 +340,23 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       
       if opt.dataset == 'css3d':
           objects = [d['source_img_objects'] for d in data]
-          extra_data = []
+          descr_data = []
           for obj in objects:
               obj_desc = []
               for desc in obj:
                   if desc['shape']:
                       obj_desc.append(desc['pos_str'] + ' ' + desc['size'] + ' ' + desc['color'] + ' ' + desc['shape'])
-              extra_data.append(obj_desc)
+              descr_data.append(obj_desc)
+            
+          target_objects = [d['target_img_objects'] for d in data]
+          target_descr_data = []
+          for obj in target_objects:
+              obj_desc = []
+              for desc in obj:
+                  if desc['shape']:
+                      obj_desc.append(desc['pos_str'] + ' ' + desc['size'] + ' ' + desc['color'] + ' ' + desc['shape'])
+              target_descr_data.append(obj_desc)
+          extra_data = [target_descr_data, descr_data]
 
 
       # compute loss

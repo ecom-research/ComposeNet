@@ -44,7 +44,9 @@ def test(opt, model, testset):
       imgs += [testset.get_img(t['source_img_id'])]
       mods += [t['mod']['str']]
       if (opt.dataset == 'fashion200k'):
-        extra_data += [str(t['target_caption'])]
+            if not extra_data:
+                extra_data = [[]]
+            extra_data[0].append(str(t['target_caption']))
       elif (opt.dataset == 'css3d'):
         # extra_data += [t['mod']['str']]
         objects = t['source_img_objects']
@@ -53,8 +55,16 @@ def test(opt, model, testset):
             if obj['shape']:
                 obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
                 
-        # print('obj_data', obj_data)
-        extra_data.append(obj_data)
+        target_objects = t['target_img_objects']
+        target_obj_data = []
+        for obj in target_objects:
+            if obj['shape']:
+                target_obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
+                
+        if not extra_data:
+            extra_data = [[], []]
+        extra_data[0].append(target_obj_data)
+        extra_data[1].append(obj_data)
       else:
         if not extra_data:
             extra_data = [[] for i in range(4)]
@@ -108,7 +118,9 @@ def test(opt, model, testset):
       item = testset[i]
       imgs += [item['source_img_data']]
       if (opt.dataset == 'fashion200k'):
-        extra_data += [str(item['target_caption'])]
+            if not extra_data:
+                extra_data = [[]]
+            extra_data[0].append(str(item['target_caption']))
       elif (opt.dataset == 'css3d'):
         # extra_data += [t['mod']['str']]
         objects = item['source_img_objects']
@@ -117,8 +129,16 @@ def test(opt, model, testset):
             if obj['shape']:
                 obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
                 
-        # print('obj_data', obj_data)
-        extra_data.append(obj_data)
+        target_objects = t['target_img_objects']
+        target_obj_data = []
+        for obj in target_objects:
+            if obj['shape']:
+                target_obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
+                
+        if not extra_data:
+            extra_data = [[], []]
+        extra_data[0].append(target_obj_data)
+        extra_data[1].append(obj_data)
       else:
         if not extra_data:
             extra_data = [[] for i in range(4)]

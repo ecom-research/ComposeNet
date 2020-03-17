@@ -104,6 +104,8 @@ class CSSDataset(BaseDataset):
         test_queries += [{
             'source_img_id': i,
             'source_img_objects': self.imgs[i]['objects'],
+            
+            'target_img_objects': self.imgs[j]['objects'],
             'target_caption': self.imgs[j]['captions'][0],
             'mod': {
                 'str': mod['to_str']
@@ -140,7 +142,9 @@ class CSSDataset(BaseDataset):
     out['source_img_id'] = img1id
     out['source_img_objects'] = self.imgs[img1id]['objects']
     out['source_img_data'] = self.get_img(img1id)
+    
     out['target_img_id'] = img2id
+    out['target_img_objects'] = self.imgs[img2id]['objects']
     out['target_img_data'] = self.get_img(img2id)
     out['mod'] = {'id': modid, 'str': self.mods[modid]['to_str']}
     return out

@@ -132,6 +132,7 @@ class ImgTextCompositionBase(torch.nn.Module):
                      soft_triplet_loss=True):
         mod_img1 = self.compose_img_text(imgs_query, modification_texts)  # ids
         mod_img1 = self.normalization_layer(mod_img1)
+        
         img2 = self.extract_img_feature(imgs_target)
         img2 = self.normalization_layer(img2)
         assert (mod_img1.shape[0] == img2.shape[0] and
@@ -151,13 +152,14 @@ class ImgTextCompositionBase(torch.nn.Module):
                                                                                modification_texts, 
                                                                                extra_data)
         mod_img1 = self.normalization_layer(mod_img1)
+        source_img1 = self.extract_img_feature(imgs_query)
         
         img2 = self.extract_img_feature(imgs_target)
         img2 = self.normalization_layer(img2)
         assert (mod_img1.shape[0] == img2.shape[0] and
                 mod_img1.shape[1] == img2.shape[1])
         if soft_triplet_loss:
-            return self.compute_soft_triplet_loss_(mod_img1, img2, text_img1, text_img2)
+            return self.compute_soft_triplet_loss_(mod_img1, img2, source_img1, text_img1)
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
@@ -376,6 +378,21 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
         
+        self.image_gated_feature_composer_second = torch.nn.Sequential(
+            ConCatModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, embed_dim)
+        )
+        self.image_res_info_composer_second = torch.nn.Sequential(
+            ConCatModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim), 
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, 2 * embed_dim), 
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, embed_dim)
+        )
+        
         self.text_gated_feature_composer = torch.nn.Sequential(
             ConCatModule(),
             torch.nn.BatchNorm1d(2 * embed_dim),
@@ -490,15 +507,25 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         # region descriptions
 #         source_context_features = [' '.join(x.values()) for x in extra_data[1]]
 #         target_context_features = [' '.join(x.values()) for x in extra_data[2]]
-        source_adjs = [x.split(' ')[0] for x in extra_data[3]]
-        target_adjs = texts
-        nouns = extra_data[0]
-        
+        if len(extra_data) > 2: # mitstates
+            source_adjs = [x.split(' ')[0] for x in extra_data[3]]
+            target_adjs = texts
+            nouns = extra_data[0]
+            text_features = [adj + " " + noun for adj, noun in zip(texts, extra_data[0])]
+        elif len(extra_data) == 2: # css
+            target_captions = [" ".join(x) if len(x) > 0 else "No objects" for x in extra_data[0]]
+            source_captions = [" ".join(x) if len(x) > 0 else "No objects" for x in extra_data[1]]
+            text_features = texts
+        else:
+            text_features = extra_data[0] # or texts, try
         # self.arithmetic_repr, self.target_repr = self.get_w2v_representation(source_adjs, target_adjs, nouns, batch_size)
-        
+        # print(text_features)
         # adding nouns to mods, target representation
-        text_features = [adj + " " + noun for adj, noun in zip(texts, extra_data[0])]
-        text_features = torch.from_numpy(bc.encode(text_features)).cuda()
+        
+        self.target_captions = torch.from_numpy(bc.encode(target_captions)).cuda()
+        self.source_captions = torch.from_numpy(bc.encode(source_captions)).cuda()
+        
+        text_features = torch.from_numpy(bc.encode(texts)).cuda()
         
 #         joined = text_features + extra_data[3]
 #         joined = bc.encode(joined)
@@ -527,31 +554,41 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         return self.compose_img_text_features(img_features, text_features)
 
     def compose_img_text_features(self, img_features, text_features):
-#         arithmetic_repr = self.text_processing(self.arithmetic_repr)
-#         target_repr = self.text_processing(self.target_repr)
 
-        # "target" text, just like img2
-        mapped_text_features_original = self.text_features_mapping(text_features)
-        mapped_image_features_original = self.image_features_mapping(img_features)
+        mapped_text_features_target = self.text_features_mapping(text_features)
+        mapped_image_features_target = self.image_features_mapping(img_features)
         
-        f1_image = self.image_gated_feature_composer((mapped_image_features_original,
-                                                      mapped_text_features_original))
-        f2_image = self.image_res_info_composer((mapped_image_features_original, 
-                                                 mapped_text_features_original))
+        f1_image = self.image_gated_feature_composer((mapped_image_features_target,
+                                                      mapped_text_features_target))
+        f2_image = self.image_res_info_composer((mapped_image_features_target, 
+                                                 mapped_text_features_target))
         
         f_image = torch.sigmoid(f1_image) * img_features * self.a[0] + self.a[1] * f2_image
         
         
         
+        mapped_text_features_source = self.text_features_mapping(self.source_captions)
+        # mapped_image_features_source = self.image_features_mapping(f_image)
+        mapped_image_features_source = f_image
         
-        f1_text = self.text_gated_feature_composer((mapped_image_features_original,
-                                                    mapped_text_features_original))
-        f2_text = self.text_res_info_composer((mapped_image_features_original, 
-                                               mapped_text_features_original))
+        f1_source_image = self.image_gated_feature_composer_second((mapped_image_features_source,
+                                                                    mapped_text_features_source))
+        f2_source_image = self.image_res_info_composer_second((mapped_image_features_source, 
+                                                               mapped_text_features_source))
         
-        f_text = torch.sigmoid(f1_text) * text_features * self.b[0] + self.b[1] * f2_text
+        f_source_image = torch.sigmoid(f1_source_image) * f_image * self.b[0] + self.b[1] * f2_source_image
         
-        return f_image, f_text, text_features
+        
+        
+        
+#         f1_text = self.text_gated_feature_composer((mapped_image_features_original,
+#                                                     mapped_text_features_original))
+#         f2_text = self.text_res_info_composer((mapped_image_features_original, 
+#                                                mapped_text_features_original))
+        
+#         f_text = torch.sigmoid(f1_text) * text_features * self.b[0] + self.b[1] * f2_text
+        
+        return f_image, f_source_image, text_features
     
     
 '''
