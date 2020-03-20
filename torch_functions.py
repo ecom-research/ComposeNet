@@ -70,8 +70,11 @@ class MyTripletLossFunc(torch.autograd.Function):
     self.triplets = triplets
     self.triplet_count = len(triplets)
 
-  def forward(self, image_features, text_features):
+  def forward(self, image_features
+             , text_features
+             ):
     self.save_for_backward(image_features, text_features)
+    # self.save_for_backward(image_features)
     
     self.distances_image = pairwise_distances(image_features).cpu().numpy()
     self.distances_text = pairwise_distances(text_features).cpu().numpy()
@@ -100,6 +103,7 @@ class MyTripletLossFunc(torch.autograd.Function):
 
   def backward(self, grad_image_output, grad_text_output):
     image_features, text_features = self.saved_tensors
+    # image_features, = self.saved_tensors
     
     image_features_np = image_features.cpu().numpy()
     text_features_np = text_features.cpu().numpy()
@@ -155,11 +159,12 @@ class TripletLoss(torch.nn.Module):
   def forward(self, x, y, triplets):
     if self.pre_layer is not None:
       x = self.pre_layer(x)
-    y = self.norm_layer(y)
+    # y = self.norm_layer(y)
     loss_im, loss_txt = MyTripletLossFunc(triplets)(x, y)
+    # loss_im = MyTripletLossFunc(triplets)(x)
     # print("current_losses loss_im, loss_txt", loss_im, loss_txt, "\n")
     
-    return loss_im + loss_txt
+    return loss_im + 0.5 * loss_txt
 
 
 class NormalizationLayer(torch.nn.Module):
