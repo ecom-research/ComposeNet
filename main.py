@@ -255,10 +255,10 @@ def create_model_and_optimizer(opt, texts):
           for j, p22 in enumerate(p2['params']):
             if p11 is p22:
               p2['params'][j] = torch.tensor(0.0, requires_grad=True)
-  optimizer = torch.optim.SGD(
-      params, lr=opt.learning_rate, 
-              momentum=0.9, 
-              weight_decay=opt.weight_decay
+  optimizer = torch.optim.SGD(params, 
+                              lr=opt.learning_rate, 
+                              momentum=0.9, 
+                              weight_decay=opt.weight_decay
   )
   
   scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -377,7 +377,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         
       # tirg evolved
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        loss_value = model.compute_loss_with_extra_data(img1, 
+        loss_s2t, loss_t2s, rec_loss = model.compute_loss_with_extra_data(img1, 
                                                         mods, 
                                                         img2, 
                                                         extra_data, 
@@ -399,9 +399,11 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       else:
         print 'Invalid loss function', opt.loss
         sys.exit()
-      loss_name = opt.loss
-      loss_weight = 1.0
-      losses += [(loss_name, loss_weight, loss_value)]
+#       loss_name = opt.loss
+#       loss_weight = 1.0
+      losses += ([('loss_s2t', 1, loss_s2t)])
+      losses += ([('loss_t2s', 1, loss_t2s)])
+      losses += ([('rec_loss', 1, rec_loss)])
       total_loss = sum([
           loss_weight * loss_value
           for loss_name, loss_weight, loss_value in losses

@@ -405,7 +405,6 @@ class MITStates(BaseDataset):
     self.split = split
     import json
     
-    
     with open('../data/paths2classes_dct.json') as f:
         self.paths2classes_dct = json.load(f)
 
