@@ -46,45 +46,7 @@ class ConCatModule(torch.nn.Module):
 
         return x
 
-class TextModule(torch.nn.Module):
 
-    def __init__(self):
-        super(TextModule, self).__init__()
-        self.bert_features = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(768),
-            torch.nn.Linear(768, 512),
-            torch.nn.ReLU(),
-            torch.nn.Linear(512, 512)
-        )
-        
-    def forward(self, x):
-        return self.bert_features(x)
-    
-
-class ConcatWithLinearModule(torch.nn.Module):
-
-    def __init__(self):
-        super(ConcatWithLinearModule, self).__init__()
-        self.bert_features = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(768),
-            torch.nn.Linear(768, 512),
-            torch.nn.ReLU(),
-            torch.nn.Linear(512, 512)
-        )
-        self.image_features = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(512),
-            torch.nn.Linear(512, 512),
-            torch.nn.Dropout(p=0.7),
-            torch.nn.ReLU(),
-            torch.nn.Linear(512, 512)
-        )
-
-    def forward(self, x):
-        x1 = self.image_features(x[0])
-        x2 = self.bert_features(x[1])
-        concat_x = torch.cat([x1, x2], 1)
-
-        return concat_x
     
 class ConcatWithLinearAndResidualModule(torch.nn.Module):
 
@@ -114,7 +76,7 @@ class ConcatWithLinearAndResidualModule(torch.nn.Module):
         x0 = self.image_features_mapping(x[0])
         x1 = self.text_features_mapping(x[1])
         
-        # x0 += image_res
+        x0 += image_res
         # x1 += text_res
         
         concat_x = torch.cat([x0, x1], 1)
@@ -178,26 +140,34 @@ class ImgTextCompositionBase(torch.nn.Module):
             return self.compute_soft_triplet_loss_(mod_img1, img2)
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
-
+        
     def compute_loss_with_extra_data(self,
                                   imgs_query,
                                   modification_texts,
                                   imgs_target,
                                   extra_data,
                                   soft_triplet_loss=True):
-        mod_img1, img2, mod_im2, img1,f_image1_decoded, img2_copy = self.compose_img_text_with_extra_data(imgs_query, 
+        mod_img1, img2, mod_img2, img1, f_image1_decoded, img2_copy = self.compose_img_text_with_extra_data(imgs_query, 
                                                                               modification_texts, 
                                                                               extra_data, 
                                                                               imgs_target)
+        img1 = self.normalization_layer(img1)
+        img2 = self.normalization_layer(img2)
+        
+        mod_img1 = self.normalization_layer(mod_img1)
+        mod_img2 = self.normalization_layer(mod_img2)
+        
+        f_image1_decoded = self.normalization_layer(f_image1_decoded)
+        
         assert (mod_img1.shape[0] == img2.shape[0] and
                 mod_img1.shape[1] == img2.shape[1])
         if soft_triplet_loss:
-            return self.compute_soft_triplet_loss_(mod_img1, img2, mod_im2, img1, f_image1_decoded, img2_copy)
+            return self.compute_soft_triplet_loss_(mod_img1, img2), self.compute_soft_triplet_loss_(mod_img2, img1)
+        # , F.mse_loss(f_image1_decoded, img2).cpu()
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
-
-    def compute_soft_triplet_loss_(self, mod_img1, img2, mod_im2, img1, f_image1_decoded, img2_copy):
+    def compute_soft_triplet_loss_(self, mod_img1, img2):
         triplets = []
         labels = range(mod_img1.shape[0]) + range(img2.shape[0])
         for i in range(len(labels)):
@@ -211,11 +181,7 @@ class ImgTextCompositionBase(torch.nn.Module):
             triplets += triplets_i[:3]
         assert (triplets and len(triplets) < 2000)
         
-        return self.soft_triplet_loss(torch.cat([mod_img1, img2]), 
-                                      torch.cat([mod_im2, img1]), 
-                                      f_image1_decoded, 
-                                      img2_copy,
-                                      triplets)
+        return self.soft_triplet_loss(torch.cat([mod_img1, img2]), triplets)
 
     def compute_batch_based_classification_loss_(self, mod_img1, img2):
         x = torch.mm(mod_img1, img2.transpose(0, 1))
@@ -352,11 +318,30 @@ class TIRG(ImgEncoderTextEncoderBase):
         f = torch.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         return f
 
+import torch
+from torch.autograd import Function
 
+class L1Penalty(Function):
+
+    @staticmethod
+    def forward(ctx, input, l1weight):
+        ctx.save_for_backward(input)
+        ctx.l1weight = l1weight
+        return input
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, = ctx.saved_variables
+        grad_input = input.clone().sign().mul(ctx.l1weight)
+        grad_input += grad_output
+        return grad_input, None
+    
 class Decoder(nn.Module):
     def __init__(self):
         super(Decoder, self).__init__()
         self.main = [
+            nn.Linear(64, 128),
+            nn.ReLU(True),
             nn.Linear(128, 256),
             nn.ReLU(True),
             nn.Linear(256, 512),
@@ -380,7 +365,9 @@ class Encoder(nn.Module):
             nn.ReLU(True),
             nn.Linear(512, 256),
             nn.ReLU(True), 
-            nn.Linear(256, 128)
+            nn.Linear(256, 128),
+            nn.ReLU(True), 
+            nn.Linear(128, 64)
         ]
 
         for idx, module in enumerate(self.main):
@@ -389,6 +376,7 @@ class Encoder(nn.Module):
     def forward(self, x):
         for layer in self.main:
             x = layer(x)
+        x = L1Penalty.apply(x, 0.01)
         return x
     
 
@@ -415,52 +403,52 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         self.encoder.eval()
         self.decoder.eval()
     
+        self.text_features_mapping = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(768),
+            torch.nn.Linear(768, 768),
+            torch.nn.ReLU(),
+            torch.nn.BatchNorm1d(768),
+            torch.nn.Linear(768, 512)
+        )
+        
+        self.image_features_mapping = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(512),
+            torch.nn.Linear(512, 512),
+            torch.nn.Dropout(p=0.7),
+            torch.nn.ReLU(),
+            torch.nn.BatchNorm1d(512),
+            torch.nn.Linear(512, 512)
+        ) 
         
         self.image_gated_feature_composer = torch.nn.Sequential(
-            ConcatWithLinearAndResidualModule(),
+            ConCatModule(),
             torch.nn.BatchNorm1d(2 * embed_dim),
-            # torch.nn.Dropout(p=0.2),
             torch.nn.ReLU(),
-            torch.nn.BatchNorm1d(2 * embed_dim),
-            torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm1d(2 * embed_dim),
-            torch.nn.Dropout(p=0.1),
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
         self.image_res_info_composer = torch.nn.Sequential(
-            ConcatWithLinearAndResidualModule(),
-            torch.nn.BatchNorm1d(2 * embed_dim),
+            ConCatModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim), 
             torch.nn.ReLU(),
-            torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
-            torch.nn.BatchNorm1d(2 * embed_dim),
+            torch.nn.Linear(2 * embed_dim, 2 * embed_dim), 
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
-        
-        # composer
-        class Composer(torch.nn.Module):
-            """Inner composer class."""
 
-            def __init__(self):
-                super(Composer, self).__init__()
-                self.m = torch.nn.Sequential(
-                    torch.nn.BatchNorm1d(2 * embed_dim),
-                    torch.nn.Linear(2 * embed_dim, 512)
-#                     torch.nn.ReLU(),
-#                     torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
-#                     torch.nn.BatchNorm1d(2 * embed_dim), 
-#                     torch.nn.ReLU(),
-#                     torch.nn.Dropout(0.1), 
-#                     torch.nn.Linear(2 * embed_dim, 512)
-                )
-
-            def forward(self, x):
-                f = torch.cat(x, dim=1)
-                f = self.m(f)
-                return f
-
-        self.composer = Composer()
+        self.text_gated_feature_composer = torch.nn.Sequential(
+            ConCatModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, 768)
+        )
+        self.text_res_info_composer = torch.nn.Sequential(
+            ConCatModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim), 
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, 768)
+        )
 
         
     def extract_coord_info(self, imgs):
@@ -594,9 +582,10 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
 
     def compose_img_text_features(self, img1_features, source_captions, target_captions, img2_features):
         # untouched img1 and img2, normalized
-        img1 = self.normalization_layer(img1_features)
+        
+        img1 = img1_features
         if not isinstance(img2_features, list): # if it is train
-            img2 = self.normalization_layer(img2_features)
+            img2 = img2_features
         else:
             img2 = []
         
@@ -608,7 +597,10 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
                                                   target_captions))
         
         f_image1 = torch.sigmoid(f1_image1) * img1_features * self.a[0] + self.a[1] * f2_image1
-        f_image1 = self.normalization_layer(f_image1)
+        
+        z_sample = self.encoder(f_image1) # encoder
+        f_image1_decoded = self.decoder(z_sample) # decoder
+
 
         
         # target_image + source_text => source_image, train mode only
@@ -617,332 +609,11 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
                                                            source_captions))
             f2_image2 = self.image_res_info_composer((img2_features, 
                                                       source_captions))
-            f_image2 = torch.sigmoid(f1_image2) * img2_features * self.a[0] + self.a[1] * f2_image2
-            f_image2 = self.normalization_layer(f_image2)
-            
-            z_sample = self.encoder(f_image1) # encoder
-            f_image1_decoded = self.decoder(z_sample) # decoder
-            print('f_image1_decoded and img2', F.mse_loss(f_image1_decoded, img2))
-            print('img2 and img2', F.mse_loss(img2, img2))
-            print('f_image1_decoded and f_image1_decoded', F.mse_loss(f_image1_decoded, f_image1_decoded))
+            f_image2 = torch.sigmoid(f1_image2) * img2_features * self.b[0] + self.b[1] * f2_image2
 
         else:
             f_image2 = None
             f_image1_decoded = None
             
-            
         
-        return f_image1, img2, f_image2, img1, f_image1_decoded, img2
-    
-    
-'''
-An alternative implementation for PyTorch with auto-infering the x-y dimensions.
-'''
-class AddCoords(nn.Module):
-
-    def __init__(self, with_r=False):
-        super(AddCoords, self).__init__()
-        self.with_r = with_r
-
-    def forward(self, input_tensor):
-        """
-        Args:
-            input_tensor: shape(batch, channel, x_dim, y_dim)
-        """
-        batch_size, _, x_dim, y_dim = input_tensor.size()
-
-        xx_channel = torch.arange(x_dim).repeat(1, y_dim, 1)
-        yy_channel = torch.arange(y_dim).repeat(1, x_dim, 1).transpose(1, 2)
-
-        xx_channel = xx_channel.float() / (x_dim - 1)
-        yy_channel = yy_channel.float() / (y_dim - 1)
-
-        xx_channel = xx_channel * 2 - 1
-        yy_channel = yy_channel * 2 - 1
-
-        xx_channel = xx_channel.repeat(batch_size, 1, 1, 1).transpose(2, 3)
-        yy_channel = yy_channel.repeat(batch_size, 1, 1, 1).transpose(2, 3)
-
-        ret = torch.cat([
-            input_tensor,
-            xx_channel.type_as(input_tensor),
-            yy_channel.type_as(input_tensor)], dim=1)
-
-        if self.with_r:
-            rr = torch.sqrt(torch.pow(xx_channel.type_as(input_tensor) - 0.5, 2) + torch.pow(yy_channel.type_as(input_tensor) - 0.5, 2))
-            ret = torch.cat([ret, rr], dim=1)
-
-        return ret
-
-
-class CoordConv(nn.Module):
-
-    def __init__(self, in_channels, out_channels, with_r=False, kernel_size=5, stride=3, padding=2):
-        super(CoordConv, self).__init__()
-        self.addcoords = AddCoords(with_r=with_r)
-        in_size = in_channels+2
-        if with_r:
-            in_size += 1
-        self.conv = torch.nn.Conv2d(in_size, out_channels, kernel_size=5, stride=3, padding=2)
-
-    def forward(self, x):
-        ret = self.addcoords(x)
-        ret = self.conv(ret)
-        return ret
-    
-    
-class Attention(torch.nn.Module):
-    """ Applies attention mechanism on the `context` using the `query`.
-
-    **Thank you** to IBM for their initial implementation of :class:`Attention`. Here is
-    their `License
-    <https://github.com/IBM/pytorch-seq2seq/blob/master/LICENSE>`__.
-
-    Args:
-        dimensions (int): Dimensionality of the query and context.
-        attention_type (str, optional): How to compute the attention score:
-
-            * dot: :math:`score(H_j,q) = H_j^T q`
-            * general: :math:`score(H_j, q) = H_j^T W_a q`
-
-    Example:
-
-         >>> attention = Attention(256)
-         >>> query = torch.randn(5, 1, 256)
-         >>> context = torch.randn(5, 5, 256)
-         >>> output, weights = attention(query, context)
-         >>> output.size()
-         torch.Size([5, 1, 256])
-         >>> weights.size()
-         torch.Size([5, 1, 5])
-    """
-
-    def __init__(self, dimensions, attention_type='general'):
-        super(Attention, self).__init__()
-
-        if attention_type not in ['dot', 'general']:
-            raise ValueError('Invalid attention type selected.')
-
-        self.attention_type = attention_type
-        if self.attention_type == 'general':
-            self.linear_in = torch.nn.Linear(dimensions, dimensions, bias=False).to('cuda')
-
-        self.linear_out = torch.nn.Linear(dimensions * 2, dimensions, bias=False).to('cuda')
-
-    def forward(self, query, context):
-        """
-        Args:
-            query (:class:`torch.FloatTensor` [batch size, output length, dimensions]): Sequence of
-                queries to query the context.
-            context (:class:`torch.FloatTensor` [batch size, query length, dimensions]): Data
-                overwhich to apply the attention mechanism.
-
-        Returns:
-            :class:`tuple` with `output` and `weights`:
-            * **output** (:class:`torch.LongTensor` [batch size, output length, dimensions]):
-              Tensor containing the attended features.
-            * **weights** (:class:`torch.FloatTensor` [batch size, output length, query length]):
-              Tensor containing attention weights.
-        """
-        batch_size, output_len, dimensions = query.size()
-        query_len = context.size(1)
-
-        if self.attention_type == "general":
-            query = query.reshape(batch_size * output_len, dimensions)
-            query = self.linear_in(query)
-            query = query.reshape(batch_size, output_len, dimensions)
-
-        # TODO: Include mask on PADDING_INDEX?
-
-        # (batch_size, output_len, dimensions) * (batch_size, query_len, dimensions) ->
-        # (batch_size, output_len, query_len)
-        attention_scores = torch.bmm(query, context.transpose(1, 2).contiguous())
-
-        # Compute weights across every context sequence
-        attention_scores = attention_scores.view(batch_size * output_len, query_len)
-        attention_weights = torch.nn.functional.softmax(attention_scores, dim=-1)
-        attention_weights = attention_weights.view(batch_size, output_len, query_len)
-
-        # (batch_size, output_len, query_len) * (batch_size, query_len, dimensions) ->
-        # (batch_size, output_len, dimensions)
-        mix = torch.bmm(attention_weights, context)
-
-        # concat -> (batch_size * output_len, 2*dimensions)
-        combined = torch.cat((mix, query), dim=2)
-        combined = combined.view(batch_size * output_len, 2 * dimensions)
-
-        # Apply linear_out on every 2nd dimension of concat
-        # output -> (batch_size, output_len, dimensions)
-        output = self.linear_out(combined).view(batch_size, output_len, dimensions)
-        output = torch.tanh(output)
-
-        return output, attention_weights
-
-
-
-def func_attention(query, context, raw_feature_norm, smooth=9., eps=1e-8):
-    """
-    query: (n_context, queryL, d)
-    context: (n_context, sourceL, d)
-    """
-    batch_size_q, queryL = query.size(0), query.size(1)
-    batch_size, sourceL = context.size(0), context.size(1)
-
-
-    # Get attention
-    # --> (batch, d, queryL)
-    queryT = torch.transpose(query, 1, 2)
-
-    # (batch, sourceL, d)(batch, d, queryL)
-    # --> (batch, sourceL, queryL)
-    attn = torch.bmm(context, queryT)
-    if raw_feature_norm == "softmax":
-        # --> (batch*sourceL, queryL)
-        attn = attn.view(batch_size*sourceL, queryL)
-        attn = torch.nn.functional.softmax(attn)
-        # --> (batch, sourceL, queryL)
-        attn = attn.view(batch_size, sourceL, queryL)
-    elif raw_feature_norm == "l2norm":
-        attn = l2norm(attn, 2)
-    elif raw_feature_norm == "clipped_l2norm":
-        attn = torch.nn.functional.leaky_relu(attn, 0.1)
-        attn = l2norm(attn, 2)
-    elif raw_feature_norm == "l1norm":
-        attn = l1norm_d(attn, 2)
-    elif raw_feature_norm == "clipped_l1norm":
-        attn = torch.nn.functional.leaky_relu(attn, 0.1)
-        attn = l1norm_d(attn, 2)
-    elif raw_feature_norm == "clipped":
-        attn = torch.nn.functional.leaky_relu(attn, 0.1)
-    elif raw_feature_norm == "no_norm":
-        pass
-    else:
-        raise ValueError("unknown first norm type:", opt.raw_feature_norm)
-    # --> (batch, queryL, sourceL)
-    attn = torch.transpose(attn, 1, 2).contiguous()
-    # --> (batch*queryL, sourceL)
-    attn = attn.view(batch_size*queryL, sourceL)
-    attn = torch.nn.functional.softmax(attn*smooth)
-    # --> (batch, queryL, sourceL)
-    attn = attn.view(batch_size, queryL, sourceL)
-    # --> (batch, sourceL, queryL)
-    attnT = torch.transpose(attn, 1, 2).contiguous()
-
-    # --> (batch, d, sourceL)
-    contextT = torch.transpose(context, 1, 2)
-    # (batch x d x sourceL)(batch x sourceL x queryL)
-    # --> (batch, d, queryL)
-    weightedContext = torch.bmm(contextT, attnT)
-    # --> (batch, queryL, d)
-    weightedContext = torch.transpose(weightedContext, 1, 2)
-
-    return weightedContext, attnT
-
-
-def l1norm(X, dim, eps=1e-8):
-    """L1-normalize columns of X
-    """
-    norm = torch.abs(X).sum(dim=dim, keepdim=True) + eps
-    X = torch.div(X, norm)
-    return X
-
-
-def l2norm(X, dim, eps=1e-8):
-    """L2-normalize columns of X
-    """
-    norm = torch.pow(X, 2).sum(dim=dim, keepdim=True).sqrt() + eps
-    X = torch.div(X, norm)
-    return X
-
-def EncoderImage(img_dim, embed_size, precomp_enc_type='basic',
-                 no_imgnorm=False):
-    """A wrapper to image encoders. Chooses between an different encoders
-    that uses precomputed image features.
-    """
-    if precomp_enc_type == 'basic':
-        img_enc = EncoderImagePrecomp(
-            img_dim, embed_size, no_imgnorm)
-    elif precomp_enc_type == 'weight_norm':
-        img_enc = EncoderImageWeightNormPrecomp(
-            img_dim, embed_size, no_imgnorm)
-    else:
-        raise ValueError("Unknown precomp_enc_type: {}".format(precomp_enc_type))
-
-    return img_enc
-
-
-class EncoderImagePrecomp(nn.Module):
-
-    def __init__(self, img_dim, embed_size, no_imgnorm=False):
-        super(EncoderImagePrecomp, self).__init__()
-        self.embed_size = embed_size
-        self.no_imgnorm = no_imgnorm
-        self.fc = nn.Linear(img_dim, embed_size)
-
-        self.init_weights()
-
-    def init_weights(self):
-        """Xavier initialization for the fully connected layer
-        """
-        r = np.sqrt(6.) / np.sqrt(self.fc.in_features +
-                                  self.fc.out_features)
-        self.fc.weight.data.uniform_(-r, r)
-        self.fc.bias.data.fill_(0)
-
-    def forward(self, images):
-        """Extract image feature vectors."""
-        # assuming that the precomputed features are already l2-normalized
-
-        features = self.fc(images)
-
-        # normalize in the joint embedding space
-        if not self.no_imgnorm:
-            features = l2norm(features, dim=-1)
-
-        return features
-
-    def load_state_dict(self, state_dict):
-        """Copies parameters. overwritting the default one to
-        accept state_dict from Full model
-        """
-        own_state = self.state_dict()
-        new_state = OrderedDict()
-        for name, param in state_dict.items():
-            if name in own_state:
-                new_state[name] = param
-
-        super(EncoderImagePrecomp, self).load_state_dict(new_state)
-
-
-
-class EncoderImageWeightNormPrecomp(nn.Module):
-
-    def __init__(self, img_dim, embed_size, no_imgnorm=False):
-        super(EncoderImageWeightNormPrecomp, self).__init__()
-        self.embed_size = embed_size
-        self.no_imgnorm = no_imgnorm
-        self.fc = weight_norm(nn.Linear(img_dim, embed_size), dim=None)
-
-    def forward(self, images):
-        """Extract image feature vectors."""
-        # assuming that the precomputed features are already l2-normalized
-
-        features = self.fc(images)
-
-        # normalize in the joint embedding space
-        if not self.no_imgnorm:
-            features = l2norm(features, dim=-1)
-
-        return features
-
-    def load_state_dict(self, state_dict):
-        """Copies parameters. overwritting the default one to
-        accept state_dict from Full model
-        """
-        own_state = self.state_dict()
-        new_state = OrderedDict()
-        for name, param in state_dict.items():
-            if name in own_state:
-                new_state[name] = param
-
-        super(EncoderImageWeightNormPrecomp, self).load_state_dict(new_state)
+        return f_image1, img2, f_image2, img1, f_image1_decoded, f_image1

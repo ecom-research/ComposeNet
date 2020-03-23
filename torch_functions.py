@@ -23,7 +23,6 @@ https://github.com/lugiavn/generalization-dml/blob/master/nams.py
 import numpy as np
 import torch
 import torchvision
-from torch.functional import F
 
 
 def pairwise_distances(x, y=None):
@@ -52,17 +51,6 @@ def pairwise_distances(x, y=None):
   return torch.clamp(dist, 0.0, np.inf)
 
 
-def cosine_distance_torch(x1, x2=None, eps=1e-8):
-    
-    x2 = x1 if x2 is None else x2
-    w1 = x1.norm(p=2, dim=1, keepdim=True)
-    w2 = w1 if x2 is x1 else x2.norm(p=2, dim=1, keepdim=True)
-    return 1 - torch.mm(x1, x2.t()) / (w1 * w2.t()).clamp(min=eps)
-
-def manhattan_distance_torch(x1):
-    return torch.clamp(torch.cdist(x1, x1, p=1), 0.0, np.inf)
-
-
 class MyTripletLossFunc(torch.autograd.Function):
 
   def __init__(self, triplets):
@@ -70,83 +58,48 @@ class MyTripletLossFunc(torch.autograd.Function):
     self.triplets = triplets
     self.triplet_count = len(triplets)
 
-  def forward(self, image_features
-             , text_features
-             ):
-    self.save_for_backward(image_features, text_features)
-    # self.save_for_backward(image_features)
-    
-    self.distances_image = pairwise_distances(image_features).cpu().numpy()
-    self.distances_text = pairwise_distances(text_features).cpu().numpy()
+  def forward(self, features):
+    self.save_for_backward(features)
 
-#     self.distances_image = pairwise_distances(image_features).cpu().numpy()
-#     self.distances_text = pairwise_distances(text_features).cpu().numpy()
-    
-    # print(image_features.shape, text_features.shape, self.distances_image.shape, self.distances_text.shape)
+    self.distances = pairwise_distances(features).cpu().numpy()
 
-    loss_image = 0.0
-    loss_text = 0.0
+    loss = 0.0
     triplet_count = 0.0
     correct_count = 0.0
     for i, j, k in self.triplets:
       w = 1.0
       triplet_count += w
-      loss_image += w * np.log(1 + np.exp(self.distances_image[i, j] - self.distances_image[i, k]))
-      loss_text += w * np.log(1 + np.exp(self.distances_text[i, j] - self.distances_text[i, k]))
-      if self.distances_image[i, j] < self.distances_image[i, k]:
+      loss += w * np.log(1 +
+                         np.exp(self.distances[i, j] - self.distances[i, k]))
+      if self.distances[i, j] < self.distances[i, k]:
         correct_count += 1
 
-    loss_image /= triplet_count
-    loss_text /= triplet_count
-    # loss /= triplet_count
-    return torch.FloatTensor((loss_image,)), torch.FloatTensor((loss_text,))
+    loss /= triplet_count
+    return torch.FloatTensor((loss,))
 
-  def backward(self, grad_image_output, grad_text_output):
-    image_features, text_features = self.saved_tensors
-    # image_features, = self.saved_tensors
-    
-    image_features_np = image_features.cpu().numpy()
-    text_features_np = text_features.cpu().numpy()
-    
-    grad_image_features = image_features.clone() * 0.0
-    grad_image_features_np = grad_image_features.cpu().numpy()
-    
-    grad_text_features = text_features.clone() * 0.0
-    grad_text_features_np = grad_text_features.cpu().numpy()
+  def backward(self, grad_output):
+    features, = self.saved_tensors
+    features_np = features.cpu().numpy()
+    grad_features = features.clone() * 0.0
+    grad_features_np = grad_features.cpu().numpy()
 
     for i, j, k in self.triplets:
       w = 1.0
-      f_img = 1.0 - 1.0 / (
-          1.0 + np.exp(self.distances_image[i, j] - self.distances_image[i, k]))
-      f_txt = 1.0 - 1.0 / (
-          1.0 + np.exp(self.distances_text[i, j] - self.distances_text[i, k]))
-        
-      grad_image_features_np[i, :] += w * f_img * (
-          image_features_np[i, :] - image_features_np[j, :]) / self.triplet_count
-      grad_image_features_np[j, :] += w * f_img * (
-          image_features_np[j, :] - image_features_np[i, :]) / self.triplet_count
-      grad_image_features_np[i, :] += -w * f_img * (
-          image_features_np[i, :] - image_features_np[k, :]) / self.triplet_count
-      grad_image_features_np[k, :] += -w * f_img * (
-          image_features_np[k, :] - image_features_np[i, :]) / self.triplet_count
-        
-      grad_text_features_np[i, :] += w * f_txt * (
-          text_features_np[i, :] - text_features_np[j, :]) / self.triplet_count
-      grad_text_features_np[j, :] += w * f_txt * (
-          text_features_np[j, :] - text_features_np[i, :]) / self.triplet_count
-      grad_text_features_np[i, :] += -w * f_txt * (
-          text_features_np[i, :] - text_features_np[k, :]) / self.triplet_count
-      grad_text_features_np[k, :] += -w * f_txt * (
-          text_features_np[k, :] - text_features_np[i, :]) / self.triplet_count
+      f = 1.0 - 1.0 / (
+          1.0 + np.exp(self.distances[i, j] - self.distances[i, k]))
+      grad_features_np[i, :] += w * f * (
+          features_np[i, :] - features_np[j, :]) / self.triplet_count
+      grad_features_np[j, :] += w * f * (
+          features_np[j, :] - features_np[i, :]) / self.triplet_count
+      grad_features_np[i, :] += -w * f * (
+          features_np[i, :] - features_np[k, :]) / self.triplet_count
+      grad_features_np[k, :] += -w * f * (
+          features_np[k, :] - features_np[i, :]) / self.triplet_count
 
-    for i in range(image_features_np.shape[0]):
-      grad_image_features[i, :] = torch.from_numpy(grad_image_features_np[i, :])
-    for i in range(text_features_np.shape[0]):
-      grad_text_features[i, :] = torch.from_numpy(grad_text_features_np[i, :])
-    grad_image_features *= float(grad_image_output.data[0])
-    grad_text_features *= float(grad_text_output.data[0])
-    
-    return grad_image_features, grad_text_features
+    for i in range(features_np.shape[0]):
+      grad_features[i, :] = torch.from_numpy(grad_features_np[i, :])
+    grad_features *= float(grad_output.data[0])
+    return grad_features
 
 
 class TripletLoss(torch.nn.Module):
@@ -154,18 +107,12 @@ class TripletLoss(torch.nn.Module):
   def __init__(self, pre_layer=None):
     super(TripletLoss, self).__init__()
     self.pre_layer = pre_layer
-    self.norm_layer = NormalizationLayer()
-    # self.recon_loss = F.mse_loss()# X_sample, X
 
-  def forward(self, x, y, f_image1_decoded, img2_copy, triplets):
+  def forward(self, x, triplets):
     if self.pre_layer is not None:
       x = self.pre_layer(x)
-    # y = self.norm_layer(y)
-    loss_im, loss_txt = MyTripletLossFunc(triplets)(x, y)
-    # loss_im = MyTripletLossFunc(triplets)(x)
-    # print("current_losses loss_im, loss_txt", loss_im, loss_txt, "\n")
-    
-    return loss_im, loss_txt, F.mse_loss(f_image1_decoded, img2_copy).cpu()
+    loss = MyTripletLossFunc(triplets)(x)
+    return loss
 
 
 class NormalizationLayer(torch.nn.Module):

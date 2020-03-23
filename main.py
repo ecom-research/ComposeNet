@@ -377,7 +377,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         
       # tirg evolved
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        loss_s2t, loss_t2s, rec_loss = model.compute_loss_with_extra_data(img1, 
+        loss_s2t, loss_t2s = model.compute_loss_with_extra_data(img1, 
                                                         mods, 
                                                         img2, 
                                                         extra_data, 
@@ -403,7 +403,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
 #       loss_weight = 1.0
       losses += ([('loss_s2t', 1, loss_s2t)])
       losses += ([('loss_t2s', 1, loss_t2s)])
-      losses += ([('rec_loss', 1, rec_loss)])
+      # losses += ([('rec_loss', 0, rec_loss)])
       total_loss = sum([
           loss_weight * loss_value
           for loss_name, loss_weight, loss_value in losses
