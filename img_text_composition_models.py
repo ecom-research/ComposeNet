@@ -111,8 +111,10 @@ class ImgTextCompositionBase(torch.nn.Module):
         super(ImgTextCompositionBase, self).__init__()
         self.normalization_layer = torch_functions.NormalizationLayer(
             normalize_scale=4.0, learn_scale=True)
-        self.text_normalization_layer = torch_functions.NormalizationLayer(
+        self.t2snormalization_layer = torch_functions.NormalizationLayer(
             normalize_scale=4.0, learn_scale=True)
+        self.text_normalization_layer = torch_functions.NormalizationLayer(
+            normalize_scale=1.0, learn_scale=True)
         self.soft_triplet_loss = torch_functions.TripletLoss()
 
     def extract_img_feature(self, imgs):
@@ -140,30 +142,48 @@ class ImgTextCompositionBase(torch.nn.Module):
             return self.compute_soft_triplet_loss_(mod_img1, img2)
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
-        
+
     def compute_loss_with_extra_data(self,
                                   imgs_query,
                                   modification_texts,
                                   imgs_target,
                                   extra_data,
                                   soft_triplet_loss=True):
-        mod_img1, img2, mod_img2, img1, f_image1_decoded, img2_copy = self.compose_img_text_with_extra_data(imgs_query, 
+        mod_img1, img2, mod_img2, img1, f_image1_decoded, _, text_img1, text_img2 = self.compose_img_text_with_extra_data(imgs_query, 
                                                                               modification_texts, 
                                                                               extra_data, 
                                                                               imgs_target)
-        img1 = self.normalization_layer(img1)
+        batch_size = mod_img1.shape[0]
+        
+        # img1 = self.t2snormalization_layer(img1)
         img2 = self.normalization_layer(img2)
         
         mod_img1 = self.normalization_layer(mod_img1)
-        mod_img2 = self.normalization_layer(mod_img2)
+        # mod_img2 = self.t2snormalization_layer(mod_img2)
         
-        f_image1_decoded = self.normalization_layer(f_image1_decoded)
+        # s2t normalization
+#         s2t_joined = self.normalization_layer(torch.cat([mod_img1, img2]))
+#         mod_img1 = s2t_joined[:batch_size]
+#         img2 = s2t_joined[batch_size:]
+        
+        # t2s normalization
+#         t2s_joined = self.normalization_layer(torch.cat([mod_img2, img1]))
+#         mod_img2 = t2s_joined[:batch_size]
+#         img1 = t2s_joined[batch_size:]
+        
+        # text normalization
+        text_joined = self.text_normalization_layer(torch.cat([text_img1, text_img2]))
+        text_img1 = text_joined[:batch_size]
+        text_img2 = text_joined[batch_size:]
+        
+        # f_image1_decoded = self.normalization_layer(f_image1_decoded)
         
         assert (mod_img1.shape[0] == img2.shape[0] and
                 mod_img1.shape[1] == img2.shape[1])
         if soft_triplet_loss:
-            return self.compute_soft_triplet_loss_(mod_img1, img2), self.compute_soft_triplet_loss_(mod_img2, img1)
-        # , F.mse_loss(f_image1_decoded, img2).cpu()
+            # , F.mse_loss(f_image1_decoded, img2).cpu(),\
+            # self.compute_soft_triplet_loss_(mod_img2, img1)
+            return self.compute_soft_triplet_loss_(mod_img1, img2), 0, self.compute_soft_triplet_loss_(text_img1, text_img2)
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
@@ -394,6 +414,7 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.b = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0])) # change to 3.0 10.0 ?
+        self.c = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
 #        self.wv = KeyedVectors.load('../tirg-with-scan/wordvectors-300.kv', mmap='r')
         self.encoder = Encoder().cuda()
         self.decoder = Decoder().cuda()
@@ -581,39 +602,49 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
                                               target_captions, img2_features)
 
     def compose_img_text_features(self, img1_features, source_captions, target_captions, img2_features):
-        # untouched img1 and img2, normalized
+        mapped_image_features_source = self.image_features_mapping(img1_features)
+        mapped_text_features_target = self.text_features_mapping(target_captions)
         
-        img1 = img1_features
         if not isinstance(img2_features, list): # if it is train
-            img2 = img2_features
+            mapped_text_features_source = self.text_features_mapping(source_captions)
+            mapped_image_features_target = self.image_features_mapping(img2_features)
         else:
-            img2 = []
+            mapped_image_features_target = []
         
         # source_image + target_text => target_image
-
-        f1_image1 = self.image_gated_feature_composer((img1_features,
-                                                       target_captions))
-        f2_image1 = self.image_res_info_composer((img1_features, 
-                                                  target_captions))
+        f1_image1 = self.image_gated_feature_composer((mapped_image_features_source,
+                                                       mapped_text_features_target))
+        f2_image1 = self.image_res_info_composer((mapped_image_features_source, 
+                                                  mapped_text_features_target))
         
         f_image1 = torch.sigmoid(f1_image1) * img1_features * self.a[0] + self.a[1] * f2_image1
-        
-        z_sample = self.encoder(f_image1) # encoder
-        f_image1_decoded = self.decoder(z_sample) # decoder
-
 
         
         # target_image + source_text => source_image, train mode only
-        if not isinstance(img2, list):
-            f1_image2 = self.image_gated_feature_composer((img2_features,
-                                                           source_captions))
-            f2_image2 = self.image_res_info_composer((img2_features, 
-                                                      source_captions))
-            f_image2 = torch.sigmoid(f1_image2) * img2_features * self.b[0] + self.b[1] * f2_image2
+        if not isinstance(mapped_image_features_target, list):
+            f_image2 = None
+#             f1_image2 = self.image_gated_feature_composer((mapped_image_features_target,
+#                                                            mapped_text_features_source))
+#             f2_image2 = self.image_res_info_composer((mapped_image_features_target, 
+#                                                       mapped_text_features_source))
+#             f_image2 = torch.sigmoid(f1_image2) * img2_features * self.c[0] + self.c[1] * f2_image2
 
         else:
             f_image2 = None
             f_image1_decoded = None
             
+        # autoencoder part
+        z_sample = self.encoder(f_image1) # encoder
+        f_image1_decoded = self.decoder(z_sample) # decoder
         
-        return f_image1, img2, f_image2, img1, f_image1_decoded, f_image1
+        
+        # text mapping parts
+        f1_text = self.text_gated_feature_composer((mapped_image_features_source,
+                                                    mapped_text_features_target))
+        f2_text = self.text_res_info_composer((mapped_image_features_source, 
+                                               mapped_text_features_target))
+        
+        f_text = torch.sigmoid(f1_text) * target_captions * self.b[0] + self.b[1] * f2_text
+            
+        
+        return f_image1, img2_features, f_image2, img1_features, f_image1_decoded, f_image1, f_text, target_captions
