@@ -377,7 +377,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         
       # tirg evolved
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        loss_s2t, loss_t2s, loss_TEXT_t2s = model.compute_loss_with_extra_data(img1, 
+        loss_s2t, loss_t2s, loss_TEXT_t2s, loss_TEXT_s2t = model.compute_loss_with_extra_data(img1, 
                                                         mods, 
                                                         img2, 
                                                         extra_data, 
@@ -402,8 +402,9 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
 #       loss_name = opt.loss
 #       loss_weight = 1.0
       losses += ([('loss_s2t', 1, loss_s2t)])
-      # losses += ([('loss_t2s', 1, loss_t2s)])
+      losses += ([('loss_t2s', 1, loss_t2s)])
       losses += ([('loss_TEXT_t2s', 1, loss_TEXT_t2s)])
+      losses += ([('loss_TEXT_s2t', 1, loss_TEXT_s2t)])
       # losses += ([('rec_loss', 0, rec_loss)])
       total_loss = sum([
           loss_weight * loss_value
@@ -433,9 +434,12 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
             
       # scheduler.step()
       # decay learing rate
-      if it >= opt.learning_rate_decay_frequency and it % opt.learning_rate_decay_frequency == 0:
+      if it >= opt.learning_rate_decay_frequency and it % opt.learning_rate_decay_frequency == 0 and it < 30000:
         for g in optimizer.param_groups:
           g['lr'] *= 0.1
+#       if it >= opt.learning_rate_decay_frequency and it % opt.learning_rate_decay_frequency == 0:
+#         for g in optimizer.param_groups:
+#           g['lr'] *= 0.1
 
   print 'Finished training'
 
