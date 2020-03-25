@@ -188,11 +188,11 @@ class ImgTextCompositionBase(torch.nn.Module):
         if soft_triplet_loss:
             # , F.mse_loss(f_image1_decoded, img2).cpu(),\
             # self.compute_soft_triplet_loss_(mod_img2, img1)
-            return self.compute_soft_triplet_loss_(mod_img1, img2), self.compute_soft_triplet_loss_(mod_img2, img1), self.compute_soft_triplet_loss_(text_img1, text_img2), self.compute_soft_triplet_loss_(text_img1_t2s, text_img2_t2s)
+            return self.compute_soft_triplet_loss_(mod_img1, img2, text_img1, text_img2), self.compute_soft_triplet_loss_(mod_img2, img1, text_img1_t2s, text_img2_t2s)
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
-    def compute_soft_triplet_loss_(self, mod_img1, img2):
+    def compute_soft_triplet_loss_(self, mod_img1, img2, t1, t2):
         triplets = []
         labels = range(mod_img1.shape[0]) + range(img2.shape[0])
         for i in range(len(labels)):
@@ -206,7 +206,7 @@ class ImgTextCompositionBase(torch.nn.Module):
             triplets += triplets_i[:3]
         assert (triplets and len(triplets) < 2000)
         
-        return self.soft_triplet_loss(torch.cat([mod_img1, img2]), triplets)
+        return self.soft_triplet_loss(torch.cat([mod_img1, img2]), torch.cat([t1, t2]), triplets)
 
     def compute_batch_based_classification_loss_(self, mod_img1, img2):
         x = torch.mm(mod_img1, img2.transpose(0, 1))
@@ -516,16 +516,18 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         self.image_gated_feature_composer = torch.nn.Sequential(
             ConCatModule(),
             torch.nn.BatchNorm1d(2 * embed_dim),
-            torch.nn.Dropout(p=0.1),
+            # torch.nn.Dropout(p=0.1),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
         self.image_res_info_composer = torch.nn.Sequential(
             ConCatModule(),
             torch.nn.BatchNorm1d(2 * embed_dim),
-            torch.nn.Dropout(p=0.1),
+            # torch.nn.Dropout(p=0.1),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, 2 * embed_dim), 
+            torch.nn.BatchNorm1d(2 * embed_dim),
+            torch.nn.Dropout(p=0.1),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
@@ -533,16 +535,18 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         self.text_gated_feature_composer = torch.nn.Sequential(
             ConCatModule(),
             torch.nn.BatchNorm1d(2 * embed_dim),
-            torch.nn.Dropout(p=0.1),
+            # torch.nn.Dropout(p=0.1),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, 768)
         )
         self.text_res_info_composer = torch.nn.Sequential(
             ConCatModule(),
             torch.nn.BatchNorm1d(2 * embed_dim),
-            torch.nn.Dropout(p=0.1),
+            # torch.nn.Dropout(p=0.1),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
+            torch.nn.BatchNorm1d(2 * embed_dim),
+            torch.nn.Dropout(p=0.1),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, 768)
         )
