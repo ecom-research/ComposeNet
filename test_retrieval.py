@@ -80,8 +80,7 @@ def test(opt, model, testset):
         imgs = torch.autograd.Variable(imgs).cuda()
         mods = [t.decode('utf-8') for t in mods]
         if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
-            f, _, _, _, _, _, _, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data, [])
-            # f = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
+            f, _, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
             f = f.data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
@@ -158,8 +157,7 @@ def test(opt, model, testset):
         mods = [t.decode('utf-8') for t in mods]
         # nouns = [t.decode('utf-8') for t in nouns]
         if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
-            f, _, _, _, _, _, _, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data, [])
-            # f = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
+            f, _, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
             f = f.data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()

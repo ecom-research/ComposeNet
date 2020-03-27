@@ -155,11 +155,11 @@ class TripletLoss(torch.nn.Module):
   def forward(self, x, y, triplets):
     if self.pre_layer is not None:
       x = self.pre_layer(x)
-    # y = self.norm_layer(y)
+    y = self.norm_layer(y)
     loss_im, loss_txt = MyTripletLossFunc(triplets)(x, y)
     # print("current_losses loss_im, loss_txt", loss_im, loss_txt, "\n")
     
-    return 0.5 * (loss_im + loss_txt)
+    return loss_im + loss_txt
 
 
 class NormalizationLayer(torch.nn.Module):

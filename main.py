@@ -255,10 +255,10 @@ def create_model_and_optimizer(opt, texts):
           for j, p22 in enumerate(p2['params']):
             if p11 is p22:
               p2['params'][j] = torch.tensor(0.0, requires_grad=True)
-  optimizer = torch.optim.SGD(params, 
-                              lr=opt.learning_rate, 
-                              momentum=0.9, 
-                              weight_decay=opt.weight_decay
+  optimizer = torch.optim.SGD(
+      params, lr=opt.learning_rate, 
+              momentum=0.9, 
+              weight_decay=opt.weight_decay
   )
   
   scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -329,8 +329,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
           source_captions = [str(d['source_caption']) for d in data]
           extra_data = [nouns, classes_descr, target_classes_descr, source_captions]
       elif opt.dataset == 'fashion200k' and opt.model == 'tirg_evolved':
-          target_caption = [str(d['target_caption']) for d in data]
-          extra_data = [target_caption]
+          extra_data = [str(d['target_caption']) for d in data]
 
       img2 = np.stack([d['target_img_data'] for d in data])
       img2 = torch.from_numpy(img2).float()
@@ -340,23 +339,13 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       
       if opt.dataset == 'css3d':
           objects = [d['source_img_objects'] for d in data]
-          descr_data = []
+          extra_data = []
           for obj in objects:
               obj_desc = []
               for desc in obj:
                   if desc['shape']:
                       obj_desc.append(desc['pos_str'] + ' ' + desc['size'] + ' ' + desc['color'] + ' ' + desc['shape'])
-              descr_data.append(obj_desc)
-            
-          target_objects = [d['target_img_objects'] for d in data]
-          target_descr_data = []
-          for obj in target_objects:
-              obj_desc = []
-              for desc in obj:
-                  if desc['shape']:
-                      obj_desc.append(desc['pos_str'] + ' ' + desc['size'] + ' ' + desc['color'] + ' ' + desc['shape'])
-              target_descr_data.append(obj_desc)
-          extra_data = [target_descr_data, descr_data]
+              extra_data.append(obj_desc)
 
 
       # compute loss
@@ -377,7 +366,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         
       # tirg evolved
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        loss_s2t_im_and_txt, loss_t2s_im_and_txt = model.compute_loss_with_extra_data(img1, 
+        loss_value = model.compute_loss_with_extra_data(img1, 
                                                         mods, 
                                                         img2, 
                                                         extra_data, 
@@ -399,13 +388,9 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       else:
         print 'Invalid loss function', opt.loss
         sys.exit()
-#       loss_name = opt.loss
-#       loss_weight = 1.0
-      losses += ([('loss_s2t_im_and_txt', 1, loss_s2t_im_and_txt)])
-      losses += ([('loss_t2s_im_and_txt', 1, loss_t2s_im_and_txt)])
-      # losses += ([('loss_TEXT_t2s', 1, loss_TEXT_t2s)])
-      # losses += ([('loss_TEXT_s2t', 1, loss_TEXT_s2t)])
-      # losses += ([('rec_loss', 0, rec_loss)])
+      loss_name = opt.loss
+      loss_weight = 1.0
+      losses += [(loss_name, loss_weight, loss_value)]
       total_loss = sum([
           loss_weight * loss_value
           for loss_name, loss_weight, loss_value in losses
@@ -434,12 +419,9 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
             
       # scheduler.step()
       # decay learing rate
-      if it >= opt.learning_rate_decay_frequency and it % opt.learning_rate_decay_frequency == 0 and it < 30000:
+      if it >= opt.learning_rate_decay_frequency and it % opt.learning_rate_decay_frequency == 0:
         for g in optimizer.param_groups:
           g['lr'] *= 0.1
-#       if it >= opt.learning_rate_decay_frequency and it % opt.learning_rate_decay_frequency == 0:
-#         for g in optimizer.param_groups:
-#           g['lr'] *= 0.1
 
   print 'Finished training'
 
