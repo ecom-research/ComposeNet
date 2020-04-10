@@ -27,6 +27,7 @@ import datasets
 import img_text_composition_models
 import numpy as np
 from tensorboardX import SummaryWriter
+from torch.autograd import Variable
 import test_retrieval
 import torch
 import torch.utils.data
@@ -255,6 +256,11 @@ def create_model_and_optimizer(opt, texts):
           for j, p22 in enumerate(p2['params']):
             if p11 is p22:
               p2['params'][j] = torch.tensor(0.0, requires_grad=True)
+            
+#   lr = 0.0001
+#   b1 = 0.5
+#   b2 = 0.999
+#   optimizer = torch.optim.Adam(params, lr=lr, betas=(b1, b2))       
   optimizer = torch.optim.SGD(
       params, lr=opt.learning_rate, 
               momentum=0.9, 
@@ -267,6 +273,22 @@ def create_model_and_optimizer(opt, texts):
   return model, optimizer, scheduler
 
 
+class Discriminator(torch.nn.Module):
+    def __init__(self):
+        super(Discriminator, self).__init__()
+
+        self.model = torch.nn.Sequential(
+            torch.nn.Linear(512, 10),
+            torch.nn.LeakyReLU(0.2, inplace=True),
+            torch.nn.Linear(10, 1),
+            torch.nn.Sigmoid(),
+        )
+
+    def forward(self, z):
+        validity = self.model(z)
+        return validity
+
+
 def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
   """Function for train loop"""
   print 'Begin training'
@@ -275,6 +297,15 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
   it = 0
   epoch = -1
   tic = time.time()
+
+  lr = 0.001
+  b1 = 0.5
+  b2 = 0.999
+  discriminator = Discriminator().cuda()
+  adversarial_loss = torch.nn.BCELoss().cuda()
+  optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(b1, b2))
+  # optimizer_D = torch.optim.SGD(discriminator.parameters(), lr=lr, weight_decay=opt.weight_decay)
+  cosine_loss = torch.nn.CosineEmbeddingLoss(margin=0.5).cuda()
   while it < opt.num_iters:
     epoch += 1
 
@@ -287,6 +318,9 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       print '    Loss', loss_name, round(avg_loss, 4)
       logger.add_scalar(loss_name, avg_loss, it)
     logger.add_scalar('learning_rate', optimizer.param_groups[0]['lr'], it)
+    
+    if epoch % 1 == 0:
+      gc.collect()
 
     # test
     if epoch % 3 == 1:
@@ -319,18 +353,16 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
 
     def training_1_iter(data):
       assert type(data) is list
+      valid = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(1.0), requires_grad=False)
+      fake = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(0.0), requires_grad=False)
+      fake_minus = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(-1.0), requires_grad=False)
       img1 = np.stack([d['source_img_data'] for d in data])
       img1 = torch.from_numpy(img1).float()
       img1 = torch.autograd.Variable(img1).cuda()
-      if opt.dataset in ['mitstates', 'mitstates_regions'] and opt.model == 'tirg_evolved':
-          classes_descr = [ast.literal_eval(d['context_classes']) for d in data]
-          target_classes_descr = [ast.literal_eval(d['target_context_classes']) for d in data]
-          nouns = [str(d['noun']) for d in data]
-          source_captions = [str(d['source_caption']) for d in data]
-          extra_data = [nouns, classes_descr, target_classes_descr, source_captions]
+      if opt.dataset in ['mitstates', 'mitstates_regions', 'mscoco_regions'] and opt.model == 'tirg_evolved':
+          extra_data = [str(d['noun']) for d in data]
       elif opt.dataset == 'fashion200k' and opt.model == 'tirg_evolved':
-          target_caption = [str(d['target_caption']) for d in data]
-          extra_data = [target_caption]
+          extra_data = [str(d['target_caption']) for d in data]
 
       img2 = np.stack([d['target_img_data'] for d in data])
       img2 = torch.from_numpy(img2).float()
@@ -377,7 +409,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         
       # tirg evolved
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        loss_value = model.compute_loss_with_extra_data(img1, 
+        loss_value, img2, encoded_imgs, img1 = model.compute_loss_with_extra_data(img1, 
                                                         mods, 
                                                         img2, 
                                                         extra_data, 
@@ -399,37 +431,56 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       else:
         print 'Invalid loss function', opt.loss
         sys.exit()
+      # positive = cosine_loss(img2, encoded_imgs, valid)
+    
+      # push from source
+      # negative = cosine_loss(img1, encoded_imgs, fake_minus)
+        
+      # cos_loss = 0.5 * positive + 0.5 * negative
+      # loss_value.add(0.1 * cos_loss)
+      # print(loss_value.type(), cos_loss.type())
+      # cos_loss.backward(retain_graph=True)
+      z = img2
+      
+      real_loss = adversarial_loss(discriminator(z), valid)
+      fake_loss = adversarial_loss(discriminator(encoded_imgs.detach()), fake)
+      d_loss = 0.5 * (real_loss + fake_loss)
+    
+      optimizer.zero_grad()
+      # loss_value.add(0.1 * negative)
+      loss_value.backward(retain_graph=True)
+      optimizer.step()
+        
+      optimizer_D.zero_grad()
+      d_loss.backward()
+      optimizer_D.step()
+    
       loss_name = opt.loss
       loss_weight = 1.0
       losses += [(loss_name, loss_weight, loss_value)]
+      # losses += [("d_loss", loss_weight, d_loss.item())]
+      # losses += [("negative cos_loss", 0.1, negative.item())]
+      losses += [("real_loss", 0.5, real_loss.item())]
+      losses += [("fake_loss", 0.5, fake_loss.item())]
+      losses += [("d_loss", 0.5, d_loss.item())]
       total_loss = sum([
-          loss_weight * loss_value
-          for loss_name, loss_weight, loss_value in losses
+        loss_weight * loss_value
+        for loss_name, loss_weight, loss_value in losses
       ])
       assert not torch.isnan(total_loss)
       losses += [('total training loss', None, total_loss.item())]
 
       # track losses
       for loss_name, loss_weight, loss_value in losses:
-        if not losses_tracking.has_key(loss_name):
-          losses_tracking[loss_name] = []
-        losses_tracking[loss_name].append(float(loss_value))
+          if not losses_tracking.has_key(loss_name):
+              losses_tracking[loss_name] = []
+          losses_tracking[loss_name].append(float(loss_value))
 
-      # gradient descend
-      optimizer.zero_grad()
-      total_loss.backward()
-      optimizer.step()
 
     for data in tqdm(trainloader, desc='Training for epoch ' + str(epoch)):
       it += 1
       training_1_iter(data)
       
-#       if it == 2700:
-#             for g in optimizer.param_groups:
-#               g['lr'] *= 0.1
-            
-      # scheduler.step()
-      # decay learing rate
       if it >= opt.learning_rate_decay_frequency and it % opt.learning_rate_decay_frequency == 0:
         for g in optimizer.param_groups:
           g['lr'] *= 0.1

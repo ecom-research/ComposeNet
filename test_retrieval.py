@@ -15,7 +15,6 @@
 
 """Evaluates the retrieval model."""
 import numpy as np
-import ast
 import torch
 import random
 from tqdm import tqdm as tqdm
@@ -25,16 +24,16 @@ def test(opt, model, testset):
   """Tests a model over the given testset."""
   model.eval()
   test_queries = testset.get_test_queries()
-  print('test_queries', len(test_queries))
    
   all_imgs = []
   all_captions = []
   all_queries = []
   all_target_captions = []
   if test_queries:
-    if opt.dataset == "mitstates_regions":
-        print('sampling 20000')
-        test_queries = random.sample(test_queries, 20000)
+     
+#     if opt.dataset == "mitstates_regions":
+#         print('sampling 20000')
+#         test_queries = random.sample(test_queries, 20000)
     # compute test query features
     imgs = []
     mods = []
@@ -44,9 +43,7 @@ def test(opt, model, testset):
       imgs += [testset.get_img(t['source_img_id'])]
       mods += [t['mod']['str']]
       if (opt.dataset == 'fashion200k'):
-            if not extra_data:
-                extra_data = [[]]
-            extra_data[0].append(str(t['target_caption']))
+        extra_data += [str(t['target_caption'])]
       elif (opt.dataset == 'css3d'):
         # extra_data += [t['mod']['str']]
         objects = t['source_img_objects']
@@ -55,24 +52,10 @@ def test(opt, model, testset):
             if obj['shape']:
                 obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
                 
-        target_objects = t['target_img_objects']
-        target_obj_data = []
-        for obj in target_objects:
-            if obj['shape']:
-                target_obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
-                
-        if not extra_data:
-            extra_data = [[], []]
-        extra_data[0].append(target_obj_data)
-        extra_data[1].append(obj_data)
+        # print('obj_data', obj_data)
+        extra_data.append(obj_data)
       else:
-        if not extra_data:
-            extra_data = [[] for i in range(4)]
-        extra_data[0].append(str(t["noun"]))
-        extra_data[1].append(ast.literal_eval(t["context_classes"]))
-        extra_data[2].append(ast.literal_eval(t["context_classes"]))
-        extra_data[3].append(str(t["source_caption"]))
-        
+        extra_data += [str(t["noun"])]
       if len(imgs) >= opt.batch_size or t is test_queries[-1]:
         if 'torch' not in str(type(imgs[0])):
           imgs = [torch.from_numpy(d).float() for d in imgs]
@@ -80,7 +63,7 @@ def test(opt, model, testset):
         imgs = torch.autograd.Variable(imgs).cuda()
         mods = [t.decode('utf-8') for t in mods]
         if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
-            f, _, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
+            f, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
             f = f.data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
@@ -113,14 +96,15 @@ def test(opt, model, testset):
     imgs = []
     mods = []
     extra_data = []
-    for i in range(10000):
+    training_approx = 10000
+    if opt.dataset == 'mitstates_regions':
+        training_approx = 6000
+    for i in range(training_approx):
       torch.cuda.empty_cache()
       item = testset[i]
       imgs += [item['source_img_data']]
       if (opt.dataset == 'fashion200k'):
-            if not extra_data:
-                extra_data = [[]]
-            extra_data[0].append(str(item['target_caption']))
+        extra_data += [str(item['target_caption'])]
       elif (opt.dataset == 'css3d'):
         # extra_data += [t['mod']['str']]
         objects = item['source_img_objects']
@@ -129,24 +113,10 @@ def test(opt, model, testset):
             if obj['shape']:
                 obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
                 
-        target_objects = t['target_img_objects']
-        target_obj_data = []
-        for obj in target_objects:
-            if obj['shape']:
-                target_obj_data.append(obj['pos_str'] + ' ' + obj['size'] + ' ' + obj['color'] + ' ' + obj['shape'])
-                
-        if not extra_data:
-            extra_data = [[], []]
-        extra_data[0].append(target_obj_data)
-        extra_data[1].append(obj_data)
+        # print('obj_data', obj_data)
+        extra_data.append(obj_data)
       else:
-        if not extra_data:
-            extra_data = [[] for i in range(4)]
-        extra_data[0].append(str(item["noun"]))
-        extra_data[1].append(ast.literal_eval(item["context_classes"]))
-        extra_data[2].append(ast.literal_eval(item["target_context_classes"]))
-        extra_data[3].append(str(item["source_caption"]))
-        
+        extra_data += [str(item["noun"])]
       mods += [item['mod']['str']]
       if len(imgs) > opt.batch_size or i == 9999:
         if type(imgs[0]).__module__ == 'numpy.core.memmap':
@@ -157,7 +127,7 @@ def test(opt, model, testset):
         mods = [t.decode('utf-8') for t in mods]
         # nouns = [t.decode('utf-8') for t in nouns]
         if opt.model in ['tirg_evolved', 'tirg_lastconv_evolved']:
-            f, _, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
+            f, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
             f = f.data.cpu().numpy()
         else:
             f = model.compose_img_text(imgs.cuda(), mods).data.cpu().numpy()
