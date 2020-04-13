@@ -201,23 +201,19 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
         self.learn_on_regions = learn_on_regions
 
         # text model
-        self.text_model = text_model.TextLSTMModel(
-            texts_to_build_vocab=texts,
-            word_embed_dim=embed_dim,
-            lstm_hidden_dim=embed_dim)
+#         self.text_model = text_model.TextLSTMModel(
+#             texts_to_build_vocab=texts,
+#             word_embed_dim=embed_dim,
+#             lstm_hidden_dim=embed_dim)
         
         if self.learn_on_regions:
             # overwrite img_model
             print("Using just linear layer for img_model...")
-            self.img_model = torch.nn.Sequential(torch.nn.Dropout(p=0.5), 
-                                                 EncoderImage(2048, 512, 
-                                                              precomp_enc_type='basic', 
-                                                              no_imgnorm=True))
-#             self.img_model = EncoderImage(2048, 512, precomp_enc_type='weight_norm', no_imgnorm=False).cuda()
+            self.img_model = torch.nn.Sequential(torch.nn.Linear(2048, 512))
             return
         
         # img model
-        img_model = torchvision.models.resnet101(pretrained=True)
+        img_model = torchvision.models.resnet18(pretrained=True)
         for param in img_model.parameters():
             param.requires_grad = False
         
@@ -227,12 +223,7 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
                 return F.adaptive_avg_pool2d(x, (1, 1))
 
         img_model.avgpool = GlobalAvgPool2d() # change shape?
-        img_model.fc = torch.nn.Sequential(# torch.nn.Linear(512, 2048),
-                                            torch.nn.Dropout(p=0.2),
-                                            EncoderImage(2048, 
-                                            512,  
-                                            precomp_enc_type='basic',  
-                                            no_imgnorm=True)) 
+        img_model.fc = torch.nn.Sequential(torch.nn.Linear(512, 512)) 
         self.img_model = img_model
 
     def extract_img_feature(self, imgs):
@@ -345,13 +336,13 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.gated_feature_composer = torch.nn.Sequential(
-            ConcatWithLinearModuleUseConv1(),
+            ConcatWithLinearModule(),
             torch.nn.BatchNorm1d(512 + 512),
             torch.nn.ReLU(),
             torch.nn.Linear(512 + 512, embed_dim)
         )
         self.res_info_composer = torch.nn.Sequential(
-            ConcatWithLinearModuleUseConv1(), 
+            ConcatWithLinearModule(), 
             torch.nn.BatchNorm1d(512 + 512), 
             torch.nn.ReLU(),
             torch.nn.Linear(512 + 512, 512 + 512), 
@@ -365,7 +356,8 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         img_features = self.extract_img_feature(imgs)
 
         # img_features = self.extract_img_feature(imgs)
-        text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, extra_data)])
+        # text_features = bc.encode([adj + ", " + noun for adj, noun in zip(extra_data, texts)])
+        text_features = bc.encode(extra_data)
         text_features = torch.from_numpy(text_features).cuda()
 
         return self.compose_img_text_features(img_features, text_features)

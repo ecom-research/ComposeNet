@@ -24,16 +24,16 @@ def test(opt, model, testset):
   """Tests a model over the given testset."""
   model.eval()
   test_queries = testset.get_test_queries()
-  print('test_queries', len(test_queries))
    
   all_imgs = []
   all_captions = []
   all_queries = []
   all_target_captions = []
   if test_queries:
-    if opt.dataset == "mitstates_regions":
-        print('sampling 20000')
-        test_queries = random.sample(test_queries, 20000)
+     
+#     if opt.dataset == "mitstates_regions":
+#         print('sampling 20000')
+#         test_queries = random.sample(test_queries, 20000)
     # compute test query features
     imgs = []
     mods = []
@@ -95,7 +95,10 @@ def test(opt, model, testset):
     imgs = []
     mods = []
     extra_data = []
-    for i in range(10000):
+    training_approx = 10000
+    if opt.dataset == 'mitstates_regions':
+        training_approx = 6000
+    for i in range(training_approx):
       torch.cuda.empty_cache()
       item = testset[i]
       imgs += [item['source_img_data']]

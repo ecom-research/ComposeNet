@@ -533,6 +533,168 @@ class MITStates(BaseDataset):
     return img
 
 
+class MSCOCOtestRegions(BaseDataset):
+  """MITStates dataset."""
+
+  def __init__(self, path, split='train', transform=None):
+    super(MSCOCOtestRegions, self).__init__()
+    self.path = path
+    self.transform = transform
+    self.split = split
+    import json
+    import os
+#     test_nouns = ['bikini', 'columns', 'chef', 'sail', 'border', 'hoof', 'drape', 'berries',
+#                   'lips', 'donut', 'lapel', 'robe', 'motor', 'leg', 'wii', 'arch', 'goats', 'cereal',
+#                   'carriage', 'wire']
+    test_nouns = ['clocks',
+ 'kneepad',
+ 'engines',
+ 'horse',
+ 'front',
+ 'menu',
+ 'trains',
+ 'cliff',
+ 'watermelon',
+ 'bark',
+ 'necklace',
+ 'mannequin',
+ 'lamp',
+ 'mountain',
+ 'arches',
+ 'keyboard',
+ 'chicken',
+ 'curtains',
+ 'photo',
+ 'bread']
+    with open(path) as f:
+        filtered_chosen_items = json.load(f)
+    
+    # self.regions_data = np.load('../bottom-up-attention/generated_data/mscoco_train_ims.npy', mmap_mode='r')
+    self.regions_data = np.load('../bottom-up-attention/generated_data/mscoco_test_ims.npy', mmap_mode='r')
+    self.imgs = []
+
+    from os import listdir
+    for k, v in filtered_chosen_items.items():
+      if v['noun_only']:
+        continue
+      adj, noun = v['adj'], v['noun']
+      if adj is None:
+        continue
+      if split == 'train' and noun in test_nouns:
+        continue
+      if split == 'test' and noun not in test_nouns:
+        continue
+      for region_feature in v['im_reg_ixs']:
+          self.imgs += [{
+                'captions': [k],
+                'adj': adj,
+                'noun': noun,
+                'image_id': region_feature['image_id'],
+                'index_in_data': region_feature['index_in_data'],
+                'region_id': region_feature['region_id']
+            }]
+
+
+    self.caption_index_init_()
+    if split == 'test':
+      self.generate_test_queries_()
+
+  def get_all_texts(self):
+    texts = []
+    for img in self.imgs:
+      texts += img['captions']
+    return texts
+
+  def __getitem__(self, idx):
+    try:
+      self.saved_item
+    except:
+      self.saved_item = None
+    if self.saved_item is None:
+      while True:
+        idx, target_idx1 = self.caption_index_sample_(idx)
+        idx, target_idx2 = self.caption_index_sample_(idx)
+        if self.imgs[target_idx1]['adj'] != self.imgs[target_idx2]['adj']:
+          break
+      idx, target_idx = [idx, target_idx1]
+      self.saved_item = [idx, target_idx2]
+    else:
+      idx, target_idx = self.saved_item
+      self.saved_item = None
+
+    mod_str = self.imgs[target_idx]['adj']
+
+    return {
+        'source_img_id': idx,
+        'source_img_data': self.get_img(idx),
+        'noun' : self.imgs[idx]['noun'],
+        'source_caption': self.imgs[idx]['captions'][0],
+        'target_img_id': target_idx,
+        'target_img_data': self.get_img(target_idx),
+        'target_caption': self.imgs[target_idx]['captions'][0],
+        'mod': {
+            'str': mod_str
+        }
+    }
+
+  def caption_index_init_(self):
+    self.caption2imgids = {}
+    self.noun2adjs = {}
+    for i, img in enumerate(self.imgs):
+      cap = img['captions'][0]
+      adj = img['adj']
+      noun = img['noun']
+      if cap not in self.caption2imgids.keys():
+        self.caption2imgids[cap] = []
+      if noun not in self.noun2adjs.keys():
+        self.noun2adjs[noun] = []
+      self.caption2imgids[cap].append(i)
+      if adj not in self.noun2adjs[noun]:
+        self.noun2adjs[noun].append(adj)
+    for noun, adjs in self.noun2adjs.iteritems():
+      try:
+          assert len(adjs) >= 2
+      except AssertionError as e:
+        print(e)
+        print(adjs, noun)
+
+  def caption_index_sample_(self, idx):
+    noun = self.imgs[idx]['noun']
+    # adj = self.imgs[idx]['adj']
+    target_adj = random.choice(self.noun2adjs[noun])
+    target_caption = target_adj + ' ' + noun
+    target_idx = random.choice(self.caption2imgids[target_caption])
+    return idx, target_idx
+
+  def generate_test_queries_(self):
+    self.test_queries = []
+    for idx, img in enumerate(self.imgs):
+      adj = img['adj']
+      noun = img['noun']
+      for target_adj in self.noun2adjs[noun]:
+        if target_adj != adj:
+          mod_str = target_adj
+          self.test_queries += [{
+              'source_img_id': idx,
+              'source_caption': adj + ' ' + noun,
+              'noun' : self.imgs[idx]['noun'],
+              'target_caption': target_adj + ' ' + noun,
+              'mod': {
+                  'str': mod_str
+              }
+          }]
+    print len(self.test_queries), 'test queries'
+
+  def __len__(self):
+    return len(self.imgs)
+
+  def get_img(self, idx):
+    image_id = self.imgs[idx]['index_in_data']
+    region_id = self.imgs[idx]['region_id']
+    
+    return self.regions_data[image_id][region_id]
+
+
 class MITStatesRegions(BaseDataset):
   """MITStates dataset."""
 
@@ -542,6 +704,9 @@ class MITStatesRegions(BaseDataset):
     self.transform = transform
     self.split = split
     import json
+    test_nouns = ['glasses', 'jacket', 'hand', 'rim', 'paper', 'building', 'paint', 'drain', 'lion',
+                  'ramp', 'fence', 'stand', 'plastic', 'background', 'sandwich', 'train', 'dog',
+                  'word', 'leaf', 'cereal']
     with open(path) as f:
         filtered_chosen_items = json.load(f)
     
@@ -554,6 +719,10 @@ class MITStatesRegions(BaseDataset):
         continue
       adj, noun = v['adj'], v['noun']
       if adj is None:
+        continue
+      if split == 'train' and noun in test_nouns:
+        continue
+      if split == 'test' and noun not in test_nouns:
         continue
       for region_feature in v['im_reg_ixs']:
           self.imgs += [{
@@ -621,6 +790,7 @@ class MITStatesRegions(BaseDataset):
       self.caption2imgids[cap].append(i)
       if adj not in self.noun2adjs[noun]:
         self.noun2adjs[noun].append(adj)
+    print("self.noun2adjs", len(self.noun2adjs))
     for noun, adjs in self.noun2adjs.iteritems():
       try:
           assert len(adjs) >= 2
@@ -662,178 +832,3 @@ class MITStatesRegions(BaseDataset):
     region_id = self.imgs[idx]['region_id']
     
     return self.regions_data[image_id][region_id]
-
-
-
-class MITStatesANDRegions(BaseDataset):
-    """MITStates dataset."""
-
-    def __init__(self, path, split='train', transform=None):
-        super(MITStatesANDRegions, self).__init__()
-        self.path = path
-        self.transform = transform
-        self.split = split
-
-        import json
-        with open('../regions_info_data.txt') as f:
-            filtered_chosen_items = json.load(f)
-
-        self.regions_data = np.load('../data/regions_5_features/train_ims.npy', mmap_mode='r')
-        self.imgs = []
-
-        from os import listdir
-        for k, v in filtered_chosen_items.items():
-            if v['noun_only']:
-                continue
-            adj, noun = v['adj'], v['noun']
-            if adj is None:
-                continue
-            for region_feature in v['im_reg_ixs']:
-                self.imgs += [{
-                    'is_region': 1,
-                    'captions': [k],
-                    'adj': adj,
-                    'noun': noun,
-                    'image_id': region_feature['image_id'],
-                    'region_id': region_feature['region_id']
-                }]
-
-        test_nouns = [
-            u'armor', u'bracelet', u'bush', u'camera', u'candy', u'castle',
-            u'ceramic', u'cheese', u'clock', u'clothes', u'coffee', u'fan', u'fig',
-            u'fish', u'foam', u'forest', u'fruit', u'furniture', u'garden', u'gate',
-            u'glass', u'horse', u'island', u'laptop', u'lead', u'lightning',
-            u'mirror', u'orange', u'paint', u'persimmon', u'plastic', u'plate',
-            u'potato', u'road', u'rubber', u'sand', u'shell', u'sky', u'smoke',
-            u'steel', u'stream', u'table', u'tea', u'tomato', u'vacuum', u'wax',
-            u'wheel', u'window', u'wool'
-        ]
-
-        for f in listdir(path + '/images'):
-            if ' ' not in f:
-                continue
-            adj, noun = f.split()
-            if adj == 'adj':
-                continue
-            if split == 'train' and noun in test_nouns:
-                continue
-            if split == 'test' and noun not in test_nouns:
-                continue
-
-            for file_path in listdir(path + '/images/' + f):
-                assert (file_path.endswith('jpg'))
-                self.imgs += [{
-                    'is_region': 0,
-                    'file_path': path + '/images/' + f + '/' + file_path,
-                    'captions': [f],
-                    'adj': adj,
-                    'noun': noun
-                }]
-
-        self.caption_index_init_()
-        if split == 'test':
-            self.generate_test_queries_()
-
-    def get_all_texts(self):
-        texts = []
-        for img in self.imgs:
-            texts += img['captions']
-        return texts
-
-    def __getitem__(self, idx):
-        try:
-            self.saved_item
-        except:
-            self.saved_item = None
-        if self.saved_item is None:
-            while True:
-                idx, target_idx1 = self.caption_index_sample_(idx)
-                idx, target_idx2 = self.caption_index_sample_(idx)
-                if self.imgs[target_idx1]['adj'] != self.imgs[target_idx2]['adj']:
-                    break
-            idx, target_idx = [idx, target_idx1]
-            self.saved_item = [idx, target_idx2]
-        else:
-            idx, target_idx = self.saved_item
-            self.saved_item = None
-
-        mod_str = self.imgs[target_idx]['adj']
-
-        return {
-            'source_img_id': idx,
-            'source_img_data': self.get_img(idx),
-            'noun': self.imgs[idx]['noun'],
-            'source_caption': self.imgs[idx]['captions'][0],
-            'target_img_id': target_idx,
-            'target_img_data': self.get_img(target_idx),
-            'target_caption': self.imgs[target_idx]['captions'][0],
-            'mod': {
-                'str': mod_str
-            }
-        }
-
-    def caption_index_init_(self):
-        self.caption2imgids = {}
-        self.noun2adjs = {}
-        for i, img in enumerate(self.imgs):
-            cap = img['captions'][0]
-            adj = img['adj']
-            noun = img['noun']
-            if cap not in self.caption2imgids.keys():
-                self.caption2imgids[cap] = []
-            if noun not in self.noun2adjs.keys():
-                self.noun2adjs[noun] = []
-            self.caption2imgids[cap].append(i)
-            if adj not in self.noun2adjs[noun]:
-                self.noun2adjs[noun].append(adj)
-        for noun, adjs in self.noun2adjs.iteritems():
-            assert len(adjs) >= 2
-
-    def caption_index_sample_(self, idx):
-        noun = self.imgs[idx]['noun']
-        # adj = self.imgs[idx]['adj']
-        target_adj = random.choice(self.noun2adjs[noun])
-        target_caption = target_adj + ' ' + noun
-        target_idx = random.choice(self.caption2imgids[target_caption])
-        return idx, target_idx
-
-    def generate_test_queries_(self):
-        self.test_queries = []
-        for idx, img in enumerate(self.imgs):
-            if not img['is_region']:
-                adj = img['adj']
-                noun = img['noun']
-                for target_adj in self.noun2adjs[noun]:
-                    if target_adj != adj:
-                        mod_str = target_adj
-                        self.test_queries += [{
-                            'source_img_id': idx,
-                            'source_caption': adj + ' ' + noun,
-                            'noun': self.imgs[idx]['noun'],
-                            'target_caption': target_adj + ' ' + noun,
-                            'mod': {
-                                'str': mod_str
-                            }
-                        }]
-        print len(self.test_queries), 'test queries'
-
-    def __len__(self):
-        return len(self.imgs)
-
-    def get_img(self, idx, raw_img=False):
-        try:
-            image_id = self.imgs[idx]['image_id'] - 1
-            region_id = self.imgs[idx]['region_id']
-            
-            return self.regions_data[image_id][region_id]
-        except:
-
-            img_path = self.imgs[idx]['file_path']
-            with open(img_path, 'rb') as f:
-                img = PIL.Image.open(f)
-                img = img.convert('RGB')
-            if raw_img:
-                return img
-            if self.transform:
-                img = self.transform(img)
-            return img

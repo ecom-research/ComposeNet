@@ -64,19 +64,19 @@ def parse_opt():
 
 def switch_weights(full_model, regions_model):
     new_model = deepcopy(full_model)
-#     for regions_model_field, tirg_model_field in zip(regions_model['model_state_dict'].items(), 
-#                                                      full_model['model_state_dict'].items()):
-#         current_field = regions_model_field[0]
-#         if current_field in full_model['model_state_dict'].keys() and 'image_features' in current_field:
-#             new_model['model_state_dict'][current_field] = \
-#             regions_model['model_state_dict'][current_field]
+    for regions_model_field, tirg_model_field in zip(regions_model['model_state_dict'].items(), 
+                                                     full_model.items()):
+        current_field = regions_model_field[0]
+        if current_field in full_model.keys(): # and 'image_features' in current_field:
+            new_model[current_field] = \
+            regions_model['model_state_dict'][current_field]
 
-    new_model['model_state_dict']['img_model.fc.0.fc.weight'] = \
-    regions_model['model_state_dict']['img_model.1.fc.weight']
-    new_model['model_state_dict']['img_model.fc.0.fc.bias'] = \
-    regions_model['model_state_dict']['img_model.1.fc.bias']
+    new_model['img_model.fc.0.weight'] = \
+    regions_model['model_state_dict']['img_model.0.weight']
+    new_model['img_model.fc.0.bias'] = \
+    regions_model['model_state_dict']['img_model.0.bias'] # img_model.fc.0.bias
     
-#     new_model['model_state_dict']['a'] = \
+#     new_model['a'] = \
 #     regions_model['model_state_dict']['a']
 
     
@@ -173,6 +173,12 @@ def load_dataset(opt):
     testset = datasets.MITStatesRegions(
         path=opt.dataset_path,
         split='test')
+  elif opt.dataset == 'mscoco_regions':
+    trainset = datasets.MSCOCOtestRegions(
+        path=opt.dataset_path, split='train')
+    testset = datasets.MSCOCOtestRegions(
+        path=opt.dataset_path,
+        split='test')
   else:
     print 'Invalid dataset', opt.dataset
     sys.exit()
@@ -196,18 +202,6 @@ def create_model_and_optimizer(opt, texts):
   elif opt.model == 'tirg':
     model = img_text_composition_models.TIRG(
         texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
-    if opt.use_pretrained:
-        # print("Using regions pretrained model from ", opt.model_checkpoint)
-        
-        regions_model_checkpoint = torch.load('../logs/mitstates/Feb22_21-33-49_ip-172-31-38-215mitstates_tirg_evolved_regions_05Drop/latest_checkpoint.pth')
-        full_model_checkpoint = torch.load('../logs/mitstates/Feb15_22-52-59_ip-172-31-38-215mitstates_tirg_original_text_model/latest_checkpoint.pth')
-        print("Switching weights...")
-        model_state = switch_weights(full_model_checkpoint, regions_model_checkpoint)
-        model.load_state_dict(model_state['model_state_dict'])
-        if not opt.test_only:
-            print("Preparing to continue training...")
-            model.train()
-            
   elif opt.model == 'tirg_lastconv':
     model = img_text_composition_models.TIRGLastConv(
         texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
@@ -215,12 +209,11 @@ def create_model_and_optimizer(opt, texts):
     model = img_text_composition_models.TIRGEvolved(
         texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
     if opt.use_pretrained:
-        regions_model_checkpoint = torch.load('../logs/mitstates/Feb22_21-33-49_ip-172-31-38-215mitstates_tirg_evolved_regions_05Drop/latest_checkpoint.pth')
-#         full_model_checkpoint = torch.load('../logs/mitstates/Feb17_16-47-38_ip-172-31-38-215mitstates_tirg_evolved_resnet101_freezed_untrained/latest_checkpoint.pth')
-        full_model_checkpoint = torch.load('../logs/mitstates/Feb24_12-33-05_ip-172-31-38-215mitstates_tirg_evolved_resnet_101_not_train/latest_checkpoint.pth')
-        print("Switching weights...")
-        model_state = switch_weights(full_model_checkpoint, regions_model_checkpoint)
-        model.load_state_dict(model_state['model_state_dict'])
+        regions_model_checkpoint = torch.load('../logs/mitstates/Apr11_09-40-11_ip-172-31-38-215mitstates_tirg_evolved_MSCOCO_regions_pretrained_on_train_lr1e-3_other_nouns_LONGER/latest_checkpoint.pth')
+#         regions_model_checkpoint = torch.load('../logs/mitstates/Apr09_17-40-37_ip-172-31-38-215mitstates_tirg_evolved_MSCOCO_regions_pretrained_on_train_lr1e-3_other_nouns/latest_checkpoint.pth')
+        model_state = switch_weights(model.state_dict(), regions_model_checkpoint)
+        model.load_state_dict(model_state)
+        print("Switched weights...")
         if not opt.test_only:
             print("Preparing to continue training...")
             model.train()
@@ -235,22 +228,35 @@ def create_model_and_optimizer(opt, texts):
 
   # create optimizer
   params = []
-  # low learning rate for pretrained layers on real image datasets
-#   if opt.dataset != 'css3d':
-#     params.append({
-#         'params': [p for p in model.img_model.fc.parameters()] + [p for p in model.img_model.fc.parameters()],
-#         'lr': opt.learning_rate
-#     })
+  if opt.dataset != 'css3d' and 'regions' not in opt.dataset:
+    params.append({
+        'params': [p for p in model.img_model.fc.parameters()],
+        'lr': opt.learning_rate
+    })
+    params.append({
+        'params': [p for p in model.img_model.parameters()],
+        'lr': 0.1 * opt.learning_rate
+    })
+  if opt.use_pretrained:
+    print("lowering learning rate for pretrained")
+#     for param in model.img_model.parameters():
+#         param.requires_grad = False
 #     params.append({
 #         'params': [p for p in model.img_model.parameters()],
-#         # 'params': [p for p in filter(lambda p: p.requires_grad, model.img_model.parameters())],
 #         'lr': 0.1 * opt.learning_rate
 #     })
+#     params.append({
+#         'params': [p for p in model.img_model.fc.parameters()],
+#         'lr': 0.1 * opt.learning_rate,
+#         'requires_grad': True
+#     })
+#     params.append({
+#         'params': [p for p in model.img_model.avgpool.parameters()],
+#         'lr': 0.1 * opt.learning_rate,
+#         'requires_grad': True
+#     })
+
   params.append({'params': [p for p in model.parameters()]})
-  # params.append({'params': [p for p in filter(lambda p: p.requires_grad, model.parameters())]})
-  # print(params)
-  # print(len(params))
-  # return
   for _, p1 in enumerate(params):  # remove duplicated params
     for _, p2 in enumerate(params):
       if p1 is not p2:
@@ -258,11 +264,11 @@ def create_model_and_optimizer(opt, texts):
           for j, p22 in enumerate(p2['params']):
             if p11 is p22:
               p2['params'][j] = torch.tensor(0.0, requires_grad=True)
-  optimizer = torch.optim.SGD(
-      params, lr=opt.learning_rate, 
-              momentum=0.9, 
-              weight_decay=opt.weight_decay
-  )
+            
+  optimizer = torch.optim.SGD(params, 
+                              lr=opt.learning_rate,
+                              momentum=0.9,
+                              weight_decay=opt.weight_decay)
   
   scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=10, eta_min=1e-5)
@@ -273,6 +279,7 @@ def create_model_and_optimizer(opt, texts):
 def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
   """Function for train loop"""
   print 'Begin training'
+  print(len(trainset.test_queries), len(testset.test_queries))
   torch.backends.cudnn.benchmark = True
   losses_tracking = {}
   it = 0
@@ -324,7 +331,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       img1 = np.stack([d['source_img_data'] for d in data])
       img1 = torch.from_numpy(img1).float()
       img1 = torch.autograd.Variable(img1).cuda()
-      if opt.dataset in ['mitstates', 'mitstates_regions'] and opt.model == 'tirg_evolved':
+      if opt.dataset in ['mitstates', 'mitstates_regions', 'mscoco_regions'] and opt.model == 'tirg_evolved':
           extra_data = [str(d['noun']) for d in data]
       elif opt.dataset == 'fashion200k' and opt.model == 'tirg_evolved':
           extra_data = [str(d['target_caption']) for d in data]
@@ -443,32 +450,8 @@ def main():
     logger.add_text(k, str(opt.__dict__[k]))
 
   trainset, testset = load_dataset(opt)
-  # adding texts !!!
-  if opt.dataset == 'mitstates' and opt.model != 'tirg':
-      print("UGLY adding vocab of regions...")
-      opt.dataset = 'mitstates_regions'
-      opt.dataset_path = "../regions_info_data.txt"
-      trainset_regions, _ = load_dataset(opt)
-      all_texts = trainset_regions.get_all_texts() + trainset.get_all_texts()
-      opt.dataset = 'mitstates'
-      opt.dataset_path = "../data/release_dataset/"
-      model, optimizer, scheduler = create_model_and_optimizer(
-          opt, [t.decode('utf-8') for t in all_texts])
-    
-  elif opt.dataset == 'mitstates_regions' and opt.model != 'tirg':
-      print("UGLY adding vocab of mitstates...")
-      opt.dataset = 'mitstates'
-      opt.dataset_path = "../data/release_dataset/"
-      trainset_regions, _ = load_dataset(opt)
-      all_texts = trainset_regions.get_all_texts() + trainset.get_all_texts()
-      model, optimizer, scheduler = create_model_and_optimizer(
-          opt, [t.decode('utf-8') for t in all_texts])
-      opt.dataset = 'mitstates_regions'
-      opt.dataset_path = "../regions_info_data.txt"
-  else:
-      model, optimizer, scheduler = create_model_and_optimizer(
-          opt, [t.decode('utf-8') for t in trainset.get_all_texts()])
-    
+  model, optimizer, scheduler = create_model_and_optimizer(
+      opt, [t.decode('utf-8') for t in trainset.get_all_texts()])
   if opt.test_only:
     print('Doing test only')
     if not opt.use_pretrained:
