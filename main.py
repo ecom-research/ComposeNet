@@ -66,20 +66,17 @@ def parse_opt():
 
 def switch_weights(full_model, regions_model):
     new_model = deepcopy(full_model)
-#     for regions_model_field, tirg_model_field in zip(regions_model['model_state_dict'].items(), 
-#                                                      full_model['model_state_dict'].items()):
-#         current_field = regions_model_field[0]
-#         if current_field in full_model['model_state_dict'].keys() and 'image_features' in current_field:
-#             new_model['model_state_dict'][current_field] = \
-#             regions_model['model_state_dict'][current_field]
+    for regions_model_field, tirg_model_field in zip(regions_model['model_state_dict'].items(), 
+                                                     full_model.items()):
+        current_field = regions_model_field[0]
+        if current_field in full_model.keys() and 'text_model' not in current_field:
+            new_model[current_field] = \
+            regions_model['model_state_dict'][current_field]
 
-    new_model['model_state_dict']['img_model.fc.0.fc.weight'] = \
-    regions_model['model_state_dict']['img_model.1.fc.weight']
-    new_model['model_state_dict']['img_model.fc.0.fc.bias'] = \
-    regions_model['model_state_dict']['img_model.1.fc.bias']
-    
-#     new_model['model_state_dict']['a'] = \
-#     regions_model['model_state_dict']['a']
+    new_model['img_model.fc.0.weight'] = \
+    regions_model['model_state_dict']['img_model.fc.0.weight']
+    new_model['img_model.fc.0.bias'] = \
+    regions_model['model_state_dict']['img_model.fc.0.bias'] # img_model.fc.0.bias
 
     
     return new_model
@@ -211,11 +208,12 @@ def create_model_and_optimizer(opt, texts):
     model = img_text_composition_models.TIRGLastConv(
         texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
   elif opt.model == 'tirg_evolved':
-    model = img_text_composition_models.TIRGEvolved(
-        texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
+    model = img_text_composition_models.TIRGEvolved(texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
     if opt.use_pretrained:
-        regions_model_checkpoint = torch.load(opt.model_checkpoint)
-        model.load_state_dict(model_state['model_state_dict'])
+        model_checkpoint = torch.load(opt.model_checkpoint)
+        model_state = switch_weights(model.state_dict(), model_checkpoint)
+        model.load_state_dict(model_state)
+        print("Switched weights...")
         if not opt.test_only:
             print("Preparing to continue training...")
             model.train()

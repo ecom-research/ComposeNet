@@ -198,10 +198,10 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
         self.learn_on_regions = learn_on_regions
 
         # text model
-        self.text_model = text_model.TextLSTMModel(
-            texts_to_build_vocab=texts,
-            word_embed_dim=embed_dim,
-            lstm_hidden_dim=embed_dim)
+#         self.text_model = text_model.TextLSTMModel(
+#             texts_to_build_vocab=texts,
+#             word_embed_dim=embed_dim,
+#             lstm_hidden_dim=embed_dim)
         
         if self.learn_on_regions:
             # overwrite img_model
