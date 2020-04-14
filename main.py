@@ -201,10 +201,7 @@ def create_model_and_optimizer(opt, texts):
     if opt.use_pretrained:
         # print("Using regions pretrained model from ", opt.model_checkpoint)
         
-        regions_model_checkpoint = torch.load('../logs/mitstates/Feb22_21-33-49_ip-172-31-38-215mitstates_tirg_evolved_regions_05Drop/latest_checkpoint.pth')
-        full_model_checkpoint = torch.load('../logs/mitstates/Feb15_22-52-59_ip-172-31-38-215mitstates_tirg_original_text_model/latest_checkpoint.pth')
-        print("Switching weights...")
-        model_state = switch_weights(full_model_checkpoint, regions_model_checkpoint)
+        regions_model_checkpoint = torch.load(opt.model_checkpoint)
         model.load_state_dict(model_state['model_state_dict'])
         if not opt.test_only:
             print("Preparing to continue training...")
@@ -217,11 +214,7 @@ def create_model_and_optimizer(opt, texts):
     model = img_text_composition_models.TIRGEvolved(
         texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
     if opt.use_pretrained:
-        regions_model_checkpoint = torch.load('../logs/mitstates/Feb22_21-33-49_ip-172-31-38-215mitstates_tirg_evolved_regions_05Drop/latest_checkpoint.pth')
-#         full_model_checkpoint = torch.load('../logs/mitstates/Feb17_16-47-38_ip-172-31-38-215mitstates_tirg_evolved_resnet101_freezed_untrained/latest_checkpoint.pth')
-        full_model_checkpoint = torch.load('../logs/mitstates/Feb24_12-33-05_ip-172-31-38-215mitstates_tirg_evolved_resnet_101_not_train/latest_checkpoint.pth')
-        print("Switching weights...")
-        model_state = switch_weights(full_model_checkpoint, regions_model_checkpoint)
+        regions_model_checkpoint = torch.load(opt.model_checkpoint)
         model.load_state_dict(model_state['model_state_dict'])
         if not opt.test_only:
             print("Preparing to continue training...")
@@ -458,32 +451,8 @@ def main():
     logger.add_text(k, str(opt.__dict__[k]))
 
   trainset, testset = load_dataset(opt)
-  # adding texts !!!
-  if opt.dataset == 'mitstates' and opt.model != 'tirg':
-      print("UGLY adding vocab of regions...")
-      opt.dataset = 'mitstates_regions'
-      opt.dataset_path = "../regions_info_data.txt"
-      trainset_regions, _ = load_dataset(opt)
-      all_texts = trainset_regions.get_all_texts() + trainset.get_all_texts()
-      opt.dataset = 'mitstates'
-      opt.dataset_path = "../data/release_dataset/"
-      model, optimizer, scheduler = create_model_and_optimizer(
-          opt, [t.decode('utf-8') for t in all_texts])
-    
-  elif opt.dataset == 'mitstates_regions' and opt.model != 'tirg':
-      print("UGLY adding vocab of mitstates...")
-      opt.dataset = 'mitstates'
-      opt.dataset_path = "../data/release_dataset/"
-      trainset_regions, _ = load_dataset(opt)
-      all_texts = trainset_regions.get_all_texts() + trainset.get_all_texts()
-      model, optimizer, scheduler = create_model_and_optimizer(
-          opt, [t.decode('utf-8') for t in all_texts])
-      opt.dataset = 'mitstates_regions'
-      opt.dataset_path = "../regions_info_data.txt"
-  else:
-      model, optimizer, scheduler = create_model_and_optimizer(
-          opt, [t.decode('utf-8') for t in trainset.get_all_texts()])
-    
+  model, optimizer, scheduler = create_model_and_optimizer(
+      opt, [t.decode('utf-8') for t in trainset.get_all_texts()])
   if opt.test_only:
     print('Doing test only')
     if not opt.use_pretrained:

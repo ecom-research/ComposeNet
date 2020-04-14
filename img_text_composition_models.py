@@ -355,7 +355,14 @@ class Decoder(nn.Module):
         for layer in self.main:
             x = layer(x)
         return x
-
+# [(torch.Size([512, 512]), 'encoder.0.weight'),
+#  (torch.Size([512]), 'encoder.0.bias'),
+#  (torch.Size([256, 512]), 'encoder.2.weight'),
+#  (torch.Size([256]), 'encoder.2.bias'),
+#  (torch.Size([128, 256]), 'encoder.4.weight'),
+#  (torch.Size([128]), 'encoder.4.bias'),
+#  (torch.Size([64, 128]), 'encoder.6.weight'),
+#  (torch.Size([64]), 'encoder.6.bias')]
 class Encoder(nn.Module):
     def __init__(self):
         super(Encoder, self).__init__()
@@ -394,11 +401,12 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.b = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0])) # change to 3.0 10.0 ?
+        self.c = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
 #        self.wv = KeyedVectors.load('../tirg-with-scan/wordvectors-300.kv', mmap='r')
         self.encoder = Encoder().cuda()
         self.decoder = Decoder().cuda()
-        self.encoder.load_state_dict(torch.load('Q_latest.pth'))
-        self.decoder.load_state_dict(torch.load('P_latest.pth'))
+        # self.encoder.load_state_dict(torch.load('Q_latest.pth'))
+        # self.decoder.load_state_dict(torch.load('P_latest.pth'))
         
         self.encoder.eval()
         self.decoder.eval()
@@ -582,38 +590,40 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
 
     def compose_img_text_features(self, img1_features, source_captions, target_captions, img2_features):
         # untouched img1 and img2, normalized
+        mapped_image_features_source = self.image_features_mapping(img1_features)
+        mapped_text_features_target = self.text_features_mapping(target_captions)
         
-        img1 = img1_features
         if not isinstance(img2_features, list): # if it is train
-            img2 = img2_features
+            mapped_text_features_source = self.text_features_mapping(source_captions)
+            mapped_image_features_target = self.image_features_mapping(img2_features)
         else:
-            img2 = []
+            mapped_image_features_target = []
         
         # source_image + target_text => target_image
-
-        f1_image1 = self.image_gated_feature_composer((img1_features,
-                                                       target_captions))
-        f2_image1 = self.image_res_info_composer((img1_features, 
-                                                  target_captions))
+        f1_image1 = self.image_gated_feature_composer((mapped_image_features_source,
+                                                       mapped_text_features_target))
+        f2_image1 = self.image_res_info_composer((mapped_image_features_source, 
+                                                  mapped_text_features_target))
         
         f_image1 = torch.sigmoid(f1_image1) * img1_features * self.a[0] + self.a[1] * f2_image1
-        
-        z_sample = self.encoder(f_image1) # encoder
-        f_image1_decoded = self.decoder(z_sample) # decoder
-
 
         
         # target_image + source_text => source_image, train mode only
-        if not isinstance(img2, list):
-            f1_image2 = self.image_gated_feature_composer((img2_features,
-                                                           source_captions))
-            f2_image2 = self.image_res_info_composer((img2_features, 
-                                                      source_captions))
-            f_image2 = torch.sigmoid(f1_image2) * img2_features * self.b[0] + self.b[1] * f2_image2
+        if not isinstance(mapped_image_features_target, list):
+            f_image2 = None
+            f1_image2 = self.image_gated_feature_composer((mapped_image_features_target,
+                                                           mapped_text_features_source))
+            f2_image2 = self.image_res_info_composer((mapped_image_features_target, 
+                                                      mapped_text_features_source))
+            f_image2 = torch.sigmoid(f1_image2) * img2_features * self.c[0] + self.c[1] * f2_image2
 
         else:
             f_image2 = None
             f_image1_decoded = None
             
+        # autoencoder part
+        z_sample = self.encoder(f_image1) # encoder
+        f_image1_decoded = self.decoder(z_sample) # decoder
+            
         
-        return f_image1, img2, f_image2, img1, f_image1_decoded, f_image1
+        return f_image1, img2_features, f_image2, img1_features, f_image1_decoded, f_image1 
