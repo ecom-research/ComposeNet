@@ -188,7 +188,9 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
         super(ImgEncoderTextEncoderBase, self).__init__()
 
         # img model
-        img_model = torchvision.models.resnet18(pretrained=True)
+        img_model = torchvision.models.resnet101(pretrained=True)
+        for param in img_model.parameters():
+            param.requires_grad = False
 
         class GlobalAvgPool2d(torch.nn.Module):
 
@@ -196,7 +198,7 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
                 return F.adaptive_avg_pool2d(x, (1, 1))
 
         img_model.avgpool = GlobalAvgPool2d() # change shape?
-        img_model.fc = torch.nn.Sequential(torch.nn.Linear(512, embed_dim))
+        img_model.fc = torch.nn.Sequential(torch.nn.Linear(2048, embed_dim))
         self.img_model = img_model
 
         # text model

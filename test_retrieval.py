@@ -88,11 +88,11 @@ def test(opt, model, testset):
       item = testset[i]
       imgs += [item['source_img_data']]
       if (opt.dataset == 'fashion200k'):
-        nouns += [str(t['target_caption'])]
+        nouns += [str(item['target_caption'])]
       elif (opt.dataset == 'css3d'):
-        nouns += [t['mod']['str']]
+        nouns += [item['mod']['str']]
       else:
-        nouns += [str(t["noun"])]
+        nouns += [str(item["noun"])]
       mods += [item['mod']['str']]
       if len(imgs) > opt.batch_size or i == 9999:
         imgs = torch.stack(imgs).float() ## !!!

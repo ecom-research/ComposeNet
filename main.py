@@ -30,8 +30,29 @@ import torch
 import torch.utils.data
 import torchvision
 from tqdm import tqdm as tqdm
+from copy import deepcopy
 
 torch.set_num_threads(3)
+
+def switch_weights(full_model, regions_model):
+    new_model = deepcopy(full_model)
+    for regions_model_field, tirg_model_field in zip(regions_model['model_state_dict'].items(), 
+                                                     full_model.items()):
+        current_field = regions_model_field[0]
+        if current_field in full_model.keys(): # and 'image_features' in current_field:
+            new_model[current_field] = \
+            regions_model['model_state_dict'][current_field]
+
+    new_model['img_model.fc.0.weight'] = \
+    regions_model['model_state_dict']['img_model.0.weight']
+    new_model['img_model.fc.0.bias'] = \
+    regions_model['model_state_dict']['img_model.0.bias'] # img_model.fc.0.bias
+    
+    new_model['a'] = \
+    regions_model['model_state_dict']['a']
+
+    
+    return new_model
 
 
 def parse_opt():
@@ -51,8 +72,10 @@ def parse_opt():
   parser.add_argument('--weight_decay', type=float, default=1e-6)
   parser.add_argument('--num_iters', type=int, default=210000)
   parser.add_argument('--loss', type=str, default='soft_triplet')
+  parser.add_argument('--use_pretrained', type=bool, default=False)
   parser.add_argument('--loader_num_workers', type=int, default=4)
   parser.add_argument('--log_dir', type=str, default='../logs/')
+  parser.add_argument('--test_only', type=bool, default=False)
   args = parser.parse_args()
   return args
 
@@ -146,6 +169,16 @@ def create_model_and_optimizer(opt, texts):
         texts, embed_dim=opt.embed_dim)
   elif opt.model == 'tirg_evolved':
     model = img_text_composition_models.TIRGEvolved(texts, embed_dim=opt.embed_dim)
+    if opt.use_pretrained:
+        
+        regions_model_checkpoint = torch.load('../logs/mitstates/Apr11_09-40-11_ip-172-31-38-215mitstates_tirg_evolved_MSCOCO_regions_pretrained_on_train_lr1e-3_other_nouns_LONGER/latest_checkpoint.pth')
+    #         regions_model_checkpoint = torch.load('../logs/mitstates/Apr09_17-40-37_ip-172-31-38-215mitstates_tirg_evolved_MSCOCO_regions_pretrained_on_train_lr1e-3_other_nouns/latest_checkpoint.pth')
+        model_state = switch_weights(model.state_dict(), regions_model_checkpoint)
+        model.load_state_dict(model_state)
+        print("Switched weights...")
+        if not opt.test_only:
+            print("Preparing to continue training...")
+            model.train()
   else:
     print 'Invalid model', opt.model
     print 'available: imgonly, textonly, concat, tirg, tirg_lastconv or tirg_evolved'
@@ -252,7 +285,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer):
                     img1, mods, img2, mods, soft_triplet_loss=True)
         elif opt.dataset == 'fashion200k':
             loss_value = model.compute_loss_with_nouns(
-                    img1, mods, img2, nouns, soft_triplet_loss=True)
+                    img1, mods, img2, target_captions, soft_triplet_loss=True)
       elif opt.loss == 'batch_based_classification':
         if opt.model == 'tirg_evolved':
             loss_value = model.compute_loss_with_nouns(
