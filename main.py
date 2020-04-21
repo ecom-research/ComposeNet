@@ -67,20 +67,12 @@ def parse_opt():
 
 def switch_weights(full_model, regions_model):
     new_model = deepcopy(full_model)
-#     for regions_model_field, tirg_model_field in zip(regions_model['model_state_dict'].items(), 
-#                                                      full_model['model_state_dict'].items()):
-#         current_field = regions_model_field[0]
-#         if current_field in full_model['model_state_dict'].keys() and 'image_features' in current_field:
-#             new_model['model_state_dict'][current_field] = \
-#             regions_model['model_state_dict'][current_field]
-
-    new_model['model_state_dict']['img_model.fc.0.fc.weight'] = \
-    regions_model['model_state_dict']['img_model.1.fc.weight']
-    new_model['model_state_dict']['img_model.fc.0.fc.bias'] = \
-    regions_model['model_state_dict']['img_model.1.fc.bias']
-    
-#     new_model['model_state_dict']['a'] = \
-#     regions_model['model_state_dict']['a']
+    for regions_model_field, tirg_model_field in zip(regions_model['model_state_dict'].items(), 
+                                                     full_model.items()):
+        current_field = regions_model_field[0]
+        if current_field in full_model.keys() and 'text_model' not in current_field:
+            new_model[current_field] = \
+            regions_model['model_state_dict'][current_field]
 
     
     return new_model
@@ -218,12 +210,10 @@ def create_model_and_optimizer(opt, texts):
     model = img_text_composition_models.TIRGEvolved(
         texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
     if opt.use_pretrained:
-        regions_model_checkpoint = torch.load('../logs/mitstates/Feb22_21-33-49_ip-172-31-38-215mitstates_tirg_evolved_regions_05Drop/latest_checkpoint.pth')
-#         full_model_checkpoint = torch.load('../logs/mitstates/Feb17_16-47-38_ip-172-31-38-215mitstates_tirg_evolved_resnet101_freezed_untrained/latest_checkpoint.pth')
-        full_model_checkpoint = torch.load('../logs/mitstates/Feb24_12-33-05_ip-172-31-38-215mitstates_tirg_evolved_resnet_101_not_train/latest_checkpoint.pth')
-        print("Switching weights...")
-        model_state = switch_weights(full_model_checkpoint, regions_model_checkpoint)
-        model.load_state_dict(model_state['model_state_dict'])
+        model_checkpoint = torch.load(opt.model_checkpoint)
+        model_state = switch_weights(model.state_dict(), model_checkpoint)
+        model.load_state_dict(model_state)
+        print("Switched weights...")
         if not opt.test_only:
             print("Preparing to continue training...")
             model.train()
@@ -278,9 +268,9 @@ class Discriminator(torch.nn.Module):
         super(Discriminator, self).__init__()
 
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(512, 10),
+            torch.nn.Linear(512, 64),
             torch.nn.LeakyReLU(0.2, inplace=True),
-            torch.nn.Linear(10, 1),
+            torch.nn.Linear(64, 1),
             torch.nn.Sigmoid(),
         )
 
@@ -350,7 +340,11 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         shuffle=True,
         drop_last=True,
         num_workers=opt.loader_num_workers)
-
+    
+    hasOptimized = False
+    valid = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(1.0), requires_grad=False)
+    fake = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(0.0), requires_grad=False)
+    fake_minus = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(-1.0), requires_grad=False)
     def training_1_iter(data):
       assert type(data) is list
       valid = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(1.0), requires_grad=False)
@@ -409,7 +403,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         
       # tirg evolved
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        loss_value, img2, encoded_imgs, img1 = model.compute_loss_with_extra_data(img1, 
+        loss_value, img2, encoded_imgs, img1, repr_to_compare_with_source = model.compute_loss_with_extra_data(img1, 
                                                         mods, 
                                                         img2, 
                                                         extra_data, 
@@ -431,56 +425,39 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       else:
         print 'Invalid loss function', opt.loss
         sys.exit()
-      # positive = cosine_loss(img2, encoded_imgs, valid)
-    
-      # push from source
-      # negative = cosine_loss(img1, encoded_imgs, fake_minus)
         
-      # cos_loss = 0.5 * positive + 0.5 * negative
-      # loss_value.add(0.1 * cos_loss)
-      # print(loss_value.type(), cos_loss.type())
-      # cos_loss.backward(retain_graph=True)
-      z = img2
-      
-      real_loss = adversarial_loss(discriminator(z), valid)
-      fake_loss = adversarial_loss(discriminator(encoded_imgs.detach()), fake)
-      d_loss = 0.5 * (real_loss + fake_loss)
-    
-      optimizer.zero_grad()
-      # loss_value.add(0.1 * negative)
-      loss_value.backward(retain_graph=True)
-      optimizer.step()
+      positive = cosine_loss(repr_to_compare_with_source, img1, valid)
+      # push away from source
+      # negative = cosine_loss(repr_to_compare_with_source, img1, fake_minus)
         
-      optimizer_D.zero_grad()
-      d_loss.backward()
-      optimizer_D.step()
-    
+      cos_loss = positive
       loss_name = opt.loss
       loss_weight = 1.0
-      losses += [(loss_name, loss_weight, loss_value)]
-      # losses += [("d_loss", loss_weight, d_loss.item())]
-      # losses += [("negative cos_loss", 0.1, negative.item())]
-      losses += [("real_loss", 0.5, real_loss.item())]
-      losses += [("fake_loss", 0.5, fake_loss.item())]
-      losses += [("d_loss", 0.5, d_loss.item())]
+      losses += [(loss_name, loss_weight, loss_value.cuda())]
+      losses += [("cos_loss", 0.3, cos_loss)]
       total_loss = sum([
-        loss_weight * loss_value
-        for loss_name, loss_weight, loss_value in losses
+          loss_weight * loss_value
+          for loss_name, loss_weight, loss_value in losses
       ])
       assert not torch.isnan(total_loss)
       losses += [('total training loss', None, total_loss.item())]
 
       # track losses
       for loss_name, loss_weight, loss_value in losses:
-          if not losses_tracking.has_key(loss_name):
-              losses_tracking[loss_name] = []
-          losses_tracking[loss_name].append(float(loss_value))
+        if not losses_tracking.has_key(loss_name):
+          losses_tracking[loss_name] = []
+        losses_tracking[loss_name].append(float(loss_value))
 
+      # gradient descend
+      optimizer.zero_grad()
+      total_loss.backward()
+      optimizer.step()
 
     for data in tqdm(trainloader, desc='Training for epoch ' + str(epoch)):
       it += 1
       training_1_iter(data)
-      
+
+      # decay learing rate
       if it >= opt.learning_rate_decay_frequency and it % opt.learning_rate_decay_frequency == 0:
         for g in optimizer.param_groups:
           g['lr'] *= 0.1
@@ -507,49 +484,8 @@ def main():
     logger.add_text(k, str(opt.__dict__[k]))
 
   trainset, testset = load_dataset(opt)
-  # adding texts !!!
-  if opt.dataset == 'mitstates' and opt.model != 'tirg':
-      print("UGLY adding vocab of regions...")
-      opt.dataset = 'mitstates_regions'
-      opt.dataset_path = "../regions_info_data.txt"
-      trainset_regions, _ = load_dataset(opt)
-      all_texts = trainset_regions.get_all_texts() + trainset.get_all_texts()
-      opt.dataset = 'mitstates'
-      opt.dataset_path = "../data/release_dataset/"
-      model, optimizer, scheduler = create_model_and_optimizer(
-          opt, [t.decode('utf-8') for t in all_texts])
-    
-  elif opt.dataset == 'mitstates_regions' and opt.model != 'tirg':
-      print("UGLY adding vocab of mitstates...")
-      opt.dataset = 'mitstates'
-      opt.dataset_path = "../data/release_dataset/"
-      trainset_regions, _ = load_dataset(opt)
-      all_texts = trainset_regions.get_all_texts() + trainset.get_all_texts()
-      model, optimizer, scheduler = create_model_and_optimizer(
-          opt, [t.decode('utf-8') for t in all_texts])
-      opt.dataset = 'mitstates_regions'
-      opt.dataset_path = "../regions_info_data.txt"
-  else:
-      model, optimizer, scheduler = create_model_and_optimizer(
-          opt, [t.decode('utf-8') for t in trainset.get_all_texts()])
-    
-  if opt.test_only:
-    print('Doing test only')
-    if not opt.use_pretrained:
-        checkpoint = torch.load(opt.model_checkpoint)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        it = checkpoint['it']
-    model.eval()
-    tests = []
-    it = 0
-    for name, dataset in [('train', trainset), ('test', testset)]:
-      t = test_retrieval.test(opt, model, dataset)
-      tests += [(name + ' ' + metric_name, metric_value)
-                for metric_name, metric_value in t]
-    for metric_name, metric_value in tests:
-      logger.add_scalar(metric_name, metric_value, it)
-      print '    ', metric_name, round(metric_value, 4)
-    return
+  model, optimizer, scheduler = create_model_and_optimizer(
+      opt, [t.decode('utf-8') for t in trainset.get_all_texts()])
         
   train_loop(opt, logger, trainset, testset, model, optimizer, scheduler)
   logger.close()
