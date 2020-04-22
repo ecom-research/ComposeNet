@@ -426,7 +426,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         print 'Invalid loss function', opt.loss
         sys.exit()
         
-      positive = cosine_loss(repr_to_compare_with_source, img1, fake_minus)
+      positive = cosine_loss(repr_to_compare_with_source, img1, valid)
       positive_text = cosine_loss(repr_to_compare_with_mods, text_features, valid)
       # push away from source
       # negative = cosine_loss(repr_to_compare_with_source, img1, fake_minus)
@@ -436,7 +436,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
       loss_name = opt.loss
       loss_weight = 1.0
       losses += [(loss_name, loss_weight, loss_value.cuda())]
-      losses += [("cos_loss", 0.1, cos_loss)]
+      losses += [("cos_loss", -0.1, cos_loss)]
       losses += [("cos_loss_text", 0.1, cos_loss_text)]
       total_loss = sum([
           loss_weight * loss_value
