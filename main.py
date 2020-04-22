@@ -61,6 +61,7 @@ def parse_opt():
   parser.add_argument('--model_checkpoint', type=str, default='')
   parser.add_argument('--learn_on_regions', type=bool, default=False)
   parser.add_argument('--use_pretrained', type=bool, default=False)
+  parser.add_argument('--optimizer', type=str, default='SGD')
   args = parser.parse_args()
   return args
 
@@ -250,8 +251,10 @@ def create_model_and_optimizer(opt, texts):
 #   lr = 0.0001
 #   b1 = 0.5
 #   b2 = 0.999
-#   optimizer = torch.optim.Adam(params, lr=lr, betas=(b1, b2))       
-  optimizer = torch.optim.SGD(
+  if opt.optimizer != 'SGD':
+    optimizer = torch.optim.Adam(params, lr=opt.learning_rate, weight_decay=opt.weight_decay)
+  else:
+    optimizer = torch.optim.SGD(
       params, lr=opt.learning_rate, 
               momentum=0.9, 
               weight_decay=opt.weight_decay
