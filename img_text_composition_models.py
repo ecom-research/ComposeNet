@@ -162,7 +162,7 @@ class ImgTextCompositionBase(torch.nn.Module):
                                   imgs_target,
                                   nouns,
                                   soft_triplet_loss=True):
-        mod_img1_non_norm, img1, repr_to_compare_with_source = self.compose_img_text_with_extra_data(imgs_query, modification_texts, nouns)
+        mod_img1_non_norm, img1, repr_to_compare_with_source, repr_to_compare_with_mods, text_features = self.compose_img_text_with_extra_data(imgs_query, modification_texts, nouns)
         mod_img1 = self.normalization_layer(mod_img1_non_norm)
         img2_non_norm = self.extract_img_feature(imgs_target)
         img2 = self.normalization_layer(img2_non_norm) # ????????????
@@ -170,7 +170,7 @@ class ImgTextCompositionBase(torch.nn.Module):
         assert (mod_img1.shape[0] == img2.shape[0] and
                 mod_img1.shape[1] == img2.shape[1])
         if soft_triplet_loss:
-            return self.compute_soft_triplet_loss_(mod_img1, img2), img2_non_norm, mod_img1_non_norm, img1, repr_to_compare_with_source
+            return self.compute_soft_triplet_loss_(mod_img1, img2), img2_non_norm, mod_img1_non_norm, img1, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
@@ -242,12 +242,9 @@ class SimpleModelImageOnly(ImgEncoderTextEncoderBase):
     def compose_img_text(self, imgs, texts):
         return self.extract_img_feature(imgs)
 
-
 class SimpleModelTextOnly(ImgEncoderTextEncoderBase):
-
     def compose_img_text(self, imgs, texts):
         return self.extract_text_feature(texts)
-
 
 class Concat(ImgEncoderTextEncoderBase):
     """Concatenation model."""
@@ -325,9 +322,6 @@ class TIRG(ImgEncoderTextEncoderBase):
         f2 = self.res_info_composer((img_features, text_features))
         f = torch.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         return f
-
-
-
 # class TIRGEvolved(ImgEncoderTextEncoderBase):
 #     """The TIGR model.
 
@@ -405,6 +399,13 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
             torch.nn.ReLU(),
             torch.nn.Linear(embed_dim, embed_dim)
         )
+        self.txtdecoder = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(embed_dim, 768),
+            torch.nn.ReLU(),
+            torch.nn.Linear(768, 768)
+        )
         self.encoder = torch.nn.Sequential(
             ConcatWithLinearModule(), 
             torch.nn.BatchNorm1d(2 * embed_dim), 
@@ -427,7 +428,8 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
 #         f = F.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         repres = self.encoder((img_features, text_features))
         repr_to_compare_with_source = self.decoder(repres)
-        return repres, img_features, repr_to_compare_with_source
+        repr_to_compare_with_mods = self.txtdecoder(repres)
+        return repres, img_features, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
 
     
 #         self.encoder = torch.nn.Sequential(

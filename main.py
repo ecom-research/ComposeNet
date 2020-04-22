@@ -403,7 +403,7 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         
       # tirg evolved
       elif opt.loss == 'soft_triplet' and opt.model == 'tirg_evolved':
-        loss_value, img2, encoded_imgs, img1, repr_to_compare_with_source = model.compute_loss_with_extra_data(img1, 
+        loss_value, img2, encoded_imgs, img1, repr_to_compare_with_source, repr_to_compare_with_mods,text_features = model.compute_loss_with_extra_data(img1,
                                                         mods, 
                                                         img2, 
                                                         extra_data, 
@@ -426,15 +426,18 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
         print 'Invalid loss function', opt.loss
         sys.exit()
         
-      positive = cosine_loss(repr_to_compare_with_source, img1, valid)
+      positive = cosine_loss(repr_to_compare_with_source, img1, fake_minus)
+      positive_text = cosine_loss(repr_to_compare_with_mods, text_features, valid)
       # push away from source
       # negative = cosine_loss(repr_to_compare_with_source, img1, fake_minus)
         
       cos_loss = positive
+      cos_loss_text = positive_text
       loss_name = opt.loss
       loss_weight = 1.0
       losses += [(loss_name, loss_weight, loss_value.cuda())]
-      losses += [("cos_loss", 0.3, cos_loss)]
+      losses += [("cos_loss", 0.1, cos_loss)]
+      losses += [("cos_loss_text", 0.1, cos_loss_text)]
       total_loss = sum([
           loss_weight * loss_value
           for loss_name, loss_weight, loss_value in losses
