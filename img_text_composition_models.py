@@ -33,7 +33,8 @@ from bert_serving.client import BertClient
 from gensim.models import KeyedVectors
 
 # wv = KeyedVectors.load('../tirg-with-scan/wordvectors-300.kv', mmap='r')
-"""this is test string"""
+"""this is test string 222"""
+"""sss"""
 bc = BertClient()
 
 class ConCatModule(torch.nn.Module):
