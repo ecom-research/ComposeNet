@@ -140,14 +140,17 @@ class ImgTextCompositionBase(torch.nn.Module):
         mod_img1_non_norm, img1, repr_to_compare_with_source, repr_to_compare_with_mods, text_features = self.compose_img_text_with_extra_data(
             imgs_query, modification_texts, nouns)
         mod_img1 = self.normalization_layer(mod_img1_non_norm)
-        img2_non_norm = self.extract_img_feature(imgs_target)
-        img2 = self.normalization_layer(img2_non_norm)  # ????????????
+        img2 = self.extract_img_feature(imgs_target)
+        # img2 = self.normalization_layer(img2_non_norm)  # ????????????
+        img2_enc= self.encoder((img2,text_features))
+        # re_score = re_score - re_head
+        # im_score = im_score - im_head
 
         assert (mod_img1.shape[0] == img2.shape[0] and
                 mod_img1.shape[1] == img2.shape[1])
         if soft_triplet_loss:
             return self.compute_soft_triplet_loss_(mod_img1,
-                                                   img2), img2_non_norm, mod_img1_non_norm, img1, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
+                                                   img2_enc), img2, mod_img1_non_norm, img1, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
@@ -365,6 +368,40 @@ class ConcatWithLinearModule(torch.nn.Module):
 
         return concat_x
 
+class RotateModule(torch.nn.Module):
+
+    def __init__(self):
+        super(RotateModule, self).__init__()
+        self.bert_features = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(768),
+            torch.nn.Linear(768, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512)
+        )
+        self.image_features = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(512),
+            torch.nn.Linear(512, 512),
+            torch.nn.Dropout(p=0.7),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+        )
+
+    def forward(self, x):
+        x1 = self.image_features(x[0])
+        x2 = self.bert_features(x[1])
+        theta = x2 # text as rotation
+        re_theta = torch.cos(theta)
+        im_theta = torch.sin(theta)
+        vector = x1 # img as vector
+        re_vector = torch.cos(vector)
+        im_vector = torch.sin(vector)
+        re_score = re_theta * re_vector + im_theta * im_vector
+        im_score = re_theta * im_vector - im_theta * re_vector
+
+        concat_x = torch.cat([re_score, im_score], 1)
+
+        return concat_x
+
 class TIRGEvolved(ImgEncoderTextEncoderBase):
     """The TIGR model.
 
@@ -430,81 +467,70 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         repr_to_compare_with_mods = self.txtdecoder(repres)
         return Comb_AE_TIRG, img_features, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
 
-# class RotateAE(ImgEncoderTextEncoderBase):
-#     """The Rotate_AE model.
-#
-#     The method is described in
-#     Nam Vo, Lu Jiang, Chen Sun, Kevin Murphy, Li-Jia Li, Li Fei-Fei, James Hays.
-#     "Composing Text and Image for Image Retrieval - An Empirical Odyssey"
-#     CVPR 2019. arXiv:1812.07119
-#     """
-#
-#     def __init__(self, texts, embed_dim, learn_on_regions):
-#         super(RotateAE, self).__init__(texts, embed_dim, learn_on_regions)
-#         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
-#         self.gated_feature_composer = torch.nn.Sequential(
-#             ConcatWithLinearModule(),
-#             torch.nn.BatchNorm1d(2 * embed_dim),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(2 * embed_dim, embed_dim)
-#         )
-#         self.res_info_composer = torch.nn.Sequential(
-#             ConcatWithLinearModule(),
-#             torch.nn.BatchNorm1d(2 * embed_dim),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(2 * embed_dim, embed_dim))
-#         self.decoder = torch.nn.Sequential(
-#             torch.nn.BatchNorm1d(embed_dim),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(embed_dim, embed_dim),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(embed_dim, embed_dim)
-#         )
-#         self.txtdecoder = torch.nn.Sequential(
-#             torch.nn.BatchNorm1d(embed_dim),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(embed_dim, 768),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(768, 768)
-#         )
-#         self.encoder = torch.nn.Sequential(
-#             ConcatWithLinearModule(),
-#             torch.nn.BatchNorm1d(2*embed_dim),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(2*embed_dim, embed_dim),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(embed_dim, embed_dim)
-#         )
-#
-#     def compose_img_text_with_extra_data(self, imgs, texts, extra_data):
-#         img_features = self.extract_img_feature(imgs)
-#
-#         text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, extra_data)])
-#         text_features = torch.from_numpy(text_features).cuda()
-#
-#         return self.compose_img_text_features(img_features, text_features)
-#
-#     def compose_img_text_features(self, img_features, text_features):
-#         #         f1 = self.gated_feature_composer((img_features, text_features))
-#         #         f2 = self.res_info_composer((img_features, text_features))
-#         #         f = F.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
-#         repres = self.encoder((img_features, text_features))
-#         repr_to_compare_with_source = self.decoder(repres)
-#         repr_to_compare_with_mods = self.txtdecoder(repres)
-#         return repres, img_features, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
+class RotateAE(ImgEncoderTextEncoderBase):
+    """The Rotate_AE model.
 
-#         self.encoder = torch.nn.Sequential(
-#             ConcatWithLinearModule(),
-#             torch.nn.BatchNorm1d(512 + 512),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(512 + 512, 512 + 512),
-#             torch.nn.BatchNorm1d(512 + 512),
-#             torch.nn.ReLU(),
-#             # torch.nn.Dropout(0.1),
-#             torch.nn.Linear(512 + 512, embed_dim)
-#         ) # mitstates_tirg_evolved_resnet18_repeat14-21-36_no_DO
+    The method is described in
+    Nam Vo, Lu Jiang, Chen Sun, Kevin Murphy, Li-Jia Li, Li Fei-Fei, James Hays.
+    "Composing Text and Image for Image Retrieval - An Empirical Odyssey"
+    CVPR 2019. arXiv:1812.07119
+    """
+
+    def __init__(self, texts, embed_dim, learn_on_regions):
+        super(RotateAE, self).__init__(texts, embed_dim, learn_on_regions)
+        self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
+        self.gated_feature_composer = torch.nn.Sequential(
+            ConcatWithLinearModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, embed_dim)
+        )
+        self.res_info_composer = torch.nn.Sequential(
+            ConcatWithLinearModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * embed_dim, embed_dim))
+        self.decoder = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(embed_dim, embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(embed_dim, embed_dim)
+        )
+        self.txtdecoder = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(embed_dim, 768),
+            torch.nn.ReLU(),
+            torch.nn.Linear(768, 768)
+        )
+        self.encoder = torch.nn.Sequential(
+            RotateModule(),
+            torch.nn.BatchNorm1d(2*embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2*embed_dim, embed_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(embed_dim, embed_dim)
+        )
+
+    def compose_img_text_with_extra_data(self, imgs, texts, extra_data):
+        img_features = self.extract_img_feature(imgs)
+
+        text_features = bc.encode([adj + " " + noun for adj, noun in zip(texts, extra_data)])
+        text_features = torch.from_numpy(text_features).cuda()
+
+        return self.compose_img_text_features(img_features, text_features)
+
+    def compose_img_text_features(self, img_features, text_features):
+        #         f1 = self.gated_feature_composer((img_features, text_features))
+        #         f2 = self.res_info_composer((img_features, text_features))
+        #         f = F.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
+        repres = self.encoder((img_features, text_features))
+        repr_to_compare_with_source = self.decoder(repres)
+        repr_to_compare_with_mods = self.txtdecoder(repres)
+        return repres, img_features, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
 
 def l1norm(X, dim, eps=1e-8):
     """L1-normalize columns of X

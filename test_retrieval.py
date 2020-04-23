@@ -83,9 +83,10 @@ def test(opt, model, testset):
           imgs = [torch.from_numpy(d).float() for d in imgs]
         imgs = torch.stack(imgs).float()
         imgs = torch.autograd.Variable(imgs).cuda()
-        imgs = model.extract_img_feature(imgs.cuda()).data.cpu().numpy()
-        
-        all_imgs += [imgs]
+        # imgs = model.extract_img_feature(imgs.cuda()).data.cpu().numpy()
+        f, _, _, _, _ = model.compose_img_text_with_extra_data(imgs.cuda(), mods, extra_data)
+        f = f.data.cpu().numpy()
+        all_imgs += [f]
         imgs = []
     all_imgs = np.concatenate(all_imgs)
     all_captions = [img['captions'][0] for img in testset.imgs]
@@ -142,7 +143,9 @@ def test(opt, model, testset):
         else:
             imgs0 = torch.stack(imgs0).float()
         imgs0 = torch.autograd.Variable(imgs0)
-        imgs0 = model.extract_img_feature(imgs0.cuda()).data.cpu().numpy()
+        imgs0, _, _, _, _ = model.compose_img_text_with_extra_data(imgs0.cuda(), mods, extra_data)
+        imgs0 = imgs0.data.cpu().numpy()
+        # imgs0 = model.extract_img_feature(imgs0.cuda()).data.cpu().numpy()
         all_imgs += [imgs0]
         imgs0 = []
       all_captions += [item['target_caption']]

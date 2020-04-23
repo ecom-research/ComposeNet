@@ -209,8 +209,10 @@ def create_model_and_optimizer(opt, texts):
         model = img_text_composition_models.TIRGLastConv(
             texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
     elif opt.model == 'tirg_evolved':
-        model = img_text_composition_models.TIRGEvolved(
+        model = img_text_composition_models.RotateAE(
             texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
+        # model = img_text_composition_models.TIRGEvolved(
+        #     texts, embed_dim=opt.embed_dim, learn_on_regions=opt.learn_on_regions)
         if opt.use_pretrained:
             model_checkpoint = torch.load(opt.model_checkpoint)
             model_state = switch_weights(model.state_dict(), model_checkpoint)
@@ -347,9 +349,9 @@ def train_loop(opt, logger, trainset, testset, model, optimizer, scheduler):
             num_workers=opt.loader_num_workers)
 
         hasOptimized = False
-        valid = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(1.0), requires_grad=False)
-        fake = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(0.0), requires_grad=False)
-        fake_minus = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(-1.0), requires_grad=False)
+        # valid = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(1.0), requires_grad=False)
+        # fake = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(0.0), requires_grad=False)
+        # fake_minus = Variable(torch.cuda.FloatTensor(opt.batch_size, 1).fill_(-1.0), requires_grad=False)
 
         def training_1_iter(data):
             assert type(data) is list
