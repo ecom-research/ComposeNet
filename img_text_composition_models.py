@@ -49,31 +49,6 @@ class ConCatModule(torch.nn.Module):
         return x
 
 
-class ConcatWithLinearModule(torch.nn.Module):
-
-    def __init__(self):
-        super(ConcatWithLinearModule, self).__init__()
-        self.bert_features = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(768),
-            torch.nn.Linear(768, 512),
-            torch.nn.ReLU(),
-            torch.nn.Linear(512, 512)
-        )
-        self.image_features = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(512),
-            torch.nn.Linear(512, 512),
-            torch.nn.Dropout(p=0.5),
-            torch.nn.ReLU(),
-            torch.nn.Linear(512, 512)
-        )
-
-    def forward(self, x):
-        x1 = self.image_features(x[0])
-        x2 = self.bert_features(x[1])
-        concat_x = torch.cat([x1, x2], 1)
-
-        return concat_x
-
 
 class ConcatWithLinearModuleUseConv1(torch.nn.Module):
 
@@ -122,7 +97,6 @@ class ConcatWithLinearModuleUseConv1(torch.nn.Module):
         concatenated = torch.cat([second_concat, third_concat], 1)
 
         return self.conv1(concatenated).squeeze(1)
-
 
 class ImgTextCompositionBase(torch.nn.Module):
     """Base class for image + text composition."""
@@ -200,7 +174,6 @@ class ImgTextCompositionBase(torch.nn.Module):
         labels = torch.autograd.Variable(labels).cuda()
         return F.cross_entropy(x, labels)
 
-
 class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
     """Base class for image and text encoder."""
 
@@ -240,7 +213,6 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
 
     def extract_text_feature(self, texts):
         return self.text_model(texts)
-
 
 class SimpleModelImageOnly(ImgEncoderTextEncoderBase):
 
@@ -329,8 +301,6 @@ class TIRG(ImgEncoderTextEncoderBase):
         f2 = self.res_info_composer((img_features, text_features))
         f = torch.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         return f
-
-
 # class TIRGEvolved(ImgEncoderTextEncoderBase):
 #     """The TIGR model.
 
@@ -376,6 +346,32 @@ class TIRG(ImgEncoderTextEncoderBase):
 #         return self.encoder_4(encoded_3), img_features
 #         # return self.conv1(concatenated).squeeze(1), img_features
 
+class ConcatWithLinearModule(torch.nn.Module):
+
+    def __init__(self):
+        super(ConcatWithLinearModule, self).__init__()
+        self.bert_features = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(768),
+            torch.nn.Linear(768, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 256)
+        )
+        self.image_features = torch.nn.Sequential(
+            torch.nn.BatchNorm1d(512),
+            torch.nn.Linear(512, 512),
+            torch.nn.Dropout(p=0.7),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 256),
+            torch.nn.Dropout(p=0.5)
+        )
+
+    def forward(self, x):
+        x1 = self.image_features(x[0])
+        x2 = self.bert_features(x[1])
+        concat_x = torch.cat([x1, x2], 1)
+
+        return concat_x
+
 class TIRGEvolved(ImgEncoderTextEncoderBase):
     """The TIGR model.
 
@@ -417,9 +413,12 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         )
         self.encoder = torch.nn.Sequential(
             ConcatWithLinearModule(),
-            torch.nn.BatchNorm1d(2 * embed_dim),
+            torch.nn.BatchNorm1d(embed_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(2 * embed_dim, embed_dim)
+            torch.nn.Linear(embed_dim, embed_dim),
+            torch.nn.Dropout(p=0.5),
+            torch.nn.ReLU(),
+            torch.nn.Linear(embed_dim, embed_dim)
         )
 
     def compose_img_text_with_extra_data(self, imgs, texts, extra_data):
