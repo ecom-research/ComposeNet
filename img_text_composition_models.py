@@ -37,6 +37,7 @@ from gensim.models import KeyedVectors
 """sss"""
 bc = BertClient()
 
+
 class ConCatModule(torch.nn.Module):
 
     def __init__(self):
@@ -46,7 +47,8 @@ class ConCatModule(torch.nn.Module):
         x = torch.cat(x, 1)
 
         return x
-    
+
+
 class ConcatWithLinearModule(torch.nn.Module):
 
     def __init__(self):
@@ -71,7 +73,8 @@ class ConcatWithLinearModule(torch.nn.Module):
         concat_x = torch.cat([x1, x2], 1)
 
         return concat_x
-    
+
+
 class ConcatWithLinearModuleUseConv1(torch.nn.Module):
 
     def __init__(self):
@@ -85,37 +88,37 @@ class ConcatWithLinearModuleUseConv1(torch.nn.Module):
             torch.nn.BatchNorm1d(768),
             torch.nn.Linear(768, 512)
         )
-        
+
         self.weight_img = torch.nn.Parameter(torch.FloatTensor(512, 512))
         self.weight_text = torch.nn.Parameter(torch.FloatTensor(512, 512))
-        
+
         # torch.nn.init.xavier_uniform_(self.weight_img)
         # torch.nn.init.xavier_uniform_(self.weight_text)
 
     def forward(self, x):
         image_f = x[0]
         text_f = x[1]
-        
+
         # first_concat = torch.cat([image_f, text_f], 1).unsqueeze(1)
-        
+
         image_f = self.image_l1(image_f)
         text_f = self.text_l1(text_f)
-        
+
         second_concat = torch.cat([image_f, text_f], 1).unsqueeze(1)
-        
+
         # image dropout
         image_f = F.dropout(image_f, p=0.5)
-        
+
         # relu first
         image_f = F.relu(image_f)
         text_f = F.relu(text_f)
-        
+
         # linear second
         image_f = F.linear(image_f, self.weight_img)
         text_f = F.linear(text_f, self.weight_text)
-        
+
         third_concat = torch.cat([image_f, text_f], 1).unsqueeze(1)
-        
+
         concatenated = torch.cat([second_concat, third_concat], 1)
 
         return self.conv1(concatenated).squeeze(1)
@@ -150,27 +153,29 @@ class ImgTextCompositionBase(torch.nn.Module):
         img2 = self.normalization_layer(img2)
         assert (mod_img1.shape[0] == img2.shape[0] and
                 mod_img1.shape[1] == img2.shape[1])
-        
+
         if soft_triplet_loss:
             return self.compute_soft_triplet_loss_(mod_img1, img2)
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
     def compute_loss_with_extra_data(self,
-                                  imgs_query,
-                                  modification_texts,
-                                  imgs_target,
-                                  nouns,
-                                  soft_triplet_loss=True):
-        mod_img1_non_norm, img1, repr_to_compare_with_source, repr_to_compare_with_mods, text_features = self.compose_img_text_with_extra_data(imgs_query, modification_texts, nouns)
+                                     imgs_query,
+                                     modification_texts,
+                                     imgs_target,
+                                     nouns,
+                                     soft_triplet_loss=True):
+        mod_img1_non_norm, img1, repr_to_compare_with_source, repr_to_compare_with_mods, text_features = self.compose_img_text_with_extra_data(
+            imgs_query, modification_texts, nouns)
         mod_img1 = self.normalization_layer(mod_img1_non_norm)
         img2_non_norm = self.extract_img_feature(imgs_target)
-        img2 = self.normalization_layer(img2_non_norm) # ????????????
-        
+        img2 = self.normalization_layer(img2_non_norm)  # ????????????
+
         assert (mod_img1.shape[0] == img2.shape[0] and
                 mod_img1.shape[1] == img2.shape[1])
         if soft_triplet_loss:
-            return self.compute_soft_triplet_loss_(mod_img1, img2), img2_non_norm, mod_img1_non_norm, img1, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
+            return self.compute_soft_triplet_loss_(mod_img1,
+                                                   img2), img2_non_norm, mod_img1_non_norm, img1, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
         else:
             return self.compute_batch_based_classification_loss_(mod_img1, img2)
 
@@ -204,34 +209,34 @@ class ImgEncoderTextEncoderBase(ImgTextCompositionBase):
         self.learn_on_regions = learn_on_regions
 
         # text model
-#         self.text_model = text_model.TextLSTMModel(
-#             texts_to_build_vocab=texts,
-#             word_embed_dim=embed_dim,
-#             lstm_hidden_dim=embed_dim)
-        
+        #         self.text_model = text_model.TextLSTMModel(
+        #             texts_to_build_vocab=texts,
+        #             word_embed_dim=embed_dim,
+        #             lstm_hidden_dim=embed_dim)
+
         if self.learn_on_regions:
             # overwrite img_model
             print("Using just linear layer for img_model...")
             self.img_model = torch.nn.Sequential(torch.nn.Linear(2048, 512))
             return
-        
+
         # img model
         img_model = torchvision.models.resnet18(pretrained=True)
-#         for param in img_model.parameters():
-#             param.requires_grad = False
-        
+
+        #         for param in img_model.parameters():
+        #             param.requires_grad = False
+
         class GlobalAvgPool2d(torch.nn.Module):
 
             def forward(self, x):
                 return F.adaptive_avg_pool2d(x, (1, 1))
 
-        img_model.avgpool = GlobalAvgPool2d() # change shape?
-        img_model.fc = torch.nn.Sequential(torch.nn.Linear(512, 512)) 
+        img_model.avgpool = GlobalAvgPool2d()  # change shape?
+        img_model.fc = torch.nn.Sequential(torch.nn.Linear(512, 512))
         self.img_model = img_model
 
     def extract_img_feature(self, imgs):
         return self.img_model(imgs)
-            
 
     def extract_text_feature(self, texts):
         return self.text_model(texts)
@@ -242,9 +247,11 @@ class SimpleModelImageOnly(ImgEncoderTextEncoderBase):
     def compose_img_text(self, imgs, texts):
         return self.extract_img_feature(imgs)
 
+
 class SimpleModelTextOnly(ImgEncoderTextEncoderBase):
     def compose_img_text(self, imgs, texts):
         return self.extract_text_feature(texts)
+
 
 class Concat(ImgEncoderTextEncoderBase):
     """Concatenation model."""
@@ -259,12 +266,12 @@ class Concat(ImgEncoderTextEncoderBase):
             def __init__(self):
                 super(Composer, self).__init__()
                 self.m = torch.nn.Sequential(
-                    torch.nn.BatchNorm1d(2 * embed_dim), 
+                    torch.nn.BatchNorm1d(2 * embed_dim),
                     torch.nn.ReLU(),
                     torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
-                    torch.nn.BatchNorm1d(2 * embed_dim), 
+                    torch.nn.BatchNorm1d(2 * embed_dim),
                     torch.nn.ReLU(),
-                    torch.nn.Dropout(0.1), 
+                    torch.nn.Dropout(0.1),
                     torch.nn.Linear(2 * embed_dim, embed_dim))
 
             def forward(self, x):
@@ -297,17 +304,17 @@ class TIRG(ImgEncoderTextEncoderBase):
 
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.gated_feature_composer = torch.nn.Sequential(
-            ConCatModule(), 
+            ConCatModule(),
             torch.nn.BatchNorm1d(2 * embed_dim),
             # torch.nn.Dropout(p=0.2),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim))
         self.res_info_composer = torch.nn.Sequential(
-            ConCatModule(), 
-            torch.nn.BatchNorm1d(2 * embed_dim), 
+            ConCatModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim),
             # torch.nn.Dropout(p=0.2),
             torch.nn.ReLU(),
-            torch.nn.Linear(2 * embed_dim, 2 * embed_dim), 
+            torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim))
 
@@ -322,6 +329,8 @@ class TIRG(ImgEncoderTextEncoderBase):
         f2 = self.res_info_composer((img_features, text_features))
         f = torch.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         return f
+
+
 # class TIRGEvolved(ImgEncoderTextEncoderBase):
 #     """The TIGR model.
 
@@ -344,7 +353,7 @@ class TIRG(ImgEncoderTextEncoderBase):
 #         self.encoder_4 = torch.nn.Sequential(torch.nn.BatchNorm1d(512),
 #                                              torch.nn.ReLU(),
 #                                              torch.nn.Linear(embed_dim, embed_dim))
-        
+
 
 #     def compose_img_text_with_extra_data(self, imgs, texts, extra_data):
 #         img_features = self.extract_img_feature(imgs)
@@ -359,14 +368,14 @@ class TIRG(ImgEncoderTextEncoderBase):
 #         encoded_2 = self.encoder_2(concat_with_linear)
 #         # encoded_2_with_dropout = F.dropout(encoded_2, p=0.2)
 #         encoded_3 = self.encoder_3(encoded_2.add(concat_with_linear))
-        
-# #         concatenated = torch.cat([concat_with_linear.unsqueeze(1), 
+
+# #         concatenated = torch.cat([concat_with_linear.unsqueeze(1),
 # #                                   encoded_2.unsqueeze(1),
-# #                                   encoded_3.unsqueeze(1)], 
-# #                                  1) 
+# #                                   encoded_3.unsqueeze(1)],
+# #                                  1)
 #         return self.encoder_4(encoded_3), img_features
 #         # return self.conv1(concatenated).squeeze(1), img_features
-    
+
 class TIRGEvolved(ImgEncoderTextEncoderBase):
     """The TIGR model.
 
@@ -380,22 +389,22 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         super(TIRGEvolved, self).__init__(texts, embed_dim, learn_on_regions)
         self.a = torch.nn.Parameter(torch.tensor([1.0, 10.0, 1.0, 1.0]))
         self.gated_feature_composer = torch.nn.Sequential(
-            ConcatWithLinearModule(), 
-            torch.nn.BatchNorm1d(2 * embed_dim), 
+            ConcatWithLinearModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
         self.res_info_composer = torch.nn.Sequential(
-            ConcatWithLinearModule(), 
-            torch.nn.BatchNorm1d(2 * embed_dim), 
+            ConcatWithLinearModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(2 * embed_dim, 2 * embed_dim), 
+            torch.nn.Linear(2 * embed_dim, 2 * embed_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim))
         self.decoder = torch.nn.Sequential(
-            torch.nn.BatchNorm1d(embed_dim), 
+            torch.nn.BatchNorm1d(embed_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(embed_dim, embed_dim), 
+            torch.nn.Linear(embed_dim, embed_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(embed_dim, embed_dim)
         )
@@ -407,12 +416,11 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
             torch.nn.Linear(768, 768)
         )
         self.encoder = torch.nn.Sequential(
-            ConcatWithLinearModule(), 
-            torch.nn.BatchNorm1d(2 * embed_dim), 
+            ConcatWithLinearModule(),
+            torch.nn.BatchNorm1d(2 * embed_dim),
             torch.nn.ReLU(),
             torch.nn.Linear(2 * embed_dim, embed_dim)
         )
-        
 
     def compose_img_text_with_extra_data(self, imgs, texts, extra_data):
         img_features = self.extract_img_feature(imgs)
@@ -423,15 +431,15 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
         return self.compose_img_text_features(img_features, text_features)
 
     def compose_img_text_features(self, img_features, text_features):
-#         f1 = self.gated_feature_composer((img_features, text_features))
-#         f2 = self.res_info_composer((img_features, text_features))
-#         f = F.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
+        #         f1 = self.gated_feature_composer((img_features, text_features))
+        #         f2 = self.res_info_composer((img_features, text_features))
+        #         f = F.sigmoid(f1) * img_features * self.a[0] + f2 * self.a[1]
         repres = self.encoder((img_features, text_features))
         repr_to_compare_with_source = self.decoder(repres)
         repr_to_compare_with_mods = self.txtdecoder(repres)
         return repres, img_features, repr_to_compare_with_source, repr_to_compare_with_mods, text_features
 
-    
+
 #         self.encoder = torch.nn.Sequential(
 #             ConcatWithLinearModule(),
 #             torch.nn.BatchNorm1d(512 + 512),
@@ -442,7 +450,7 @@ class TIRGEvolved(ImgEncoderTextEncoderBase):
 #             # torch.nn.Dropout(0.1),
 #             torch.nn.Linear(512 + 512, embed_dim)
 #         ) # mitstates_tirg_evolved_resnet18_repeat14-21-36_no_DO
-    
+
 def l1norm(X, dim, eps=1e-8):
     """L1-normalize columns of X
     """
@@ -457,6 +465,7 @@ def l2norm(X, dim, eps=1e-8):
     norm = torch.pow(X, 2).sum(dim=dim, keepdim=True).sqrt() + eps
     X = torch.div(X, norm)
     return X
+
 
 def EncoderImage(img_dim, embed_size, precomp_enc_type='basic',
                  no_imgnorm=False):
@@ -516,7 +525,6 @@ class EncoderImagePrecomp(nn.Module):
                 new_state[name] = param
 
         super(EncoderImagePrecomp, self).load_state_dict(new_state)
-
 
 
 class EncoderImageWeightNormPrecomp(nn.Module):
